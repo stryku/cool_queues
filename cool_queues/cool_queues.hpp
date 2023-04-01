@@ -307,4 +307,49 @@ private:
   buffer_version_t m_version = 0;
 };
 
+class messages_range {
+public:
+  explicit messages_range(std::span<std::byte> buffer) : m_buffer{buffer} {}
+
+  struct iterator {
+    explicit iterator(std::byte *data) : m_data{data} {}
+
+    std::span<std::byte> operator*() const {
+      message_size_t msg_size;
+      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
+      return std::span{m_data + sizeof(message_size_t), msg_size};
+    }
+
+    iterator &operator++() {
+      message_size_t msg_size;
+      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
+      m_data += msg_size + sizeof(message_size_t);
+      return *this;
+    }
+
+    iterator operator++(int) {
+      auto copy = *this;
+      message_size_t msg_size;
+      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
+      m_data += msg_size + sizeof(message_size_t);
+      return copy;
+    }
+
+    constexpr bool operator==(const iterator &) const = default;
+
+    std::byte *m_data = nullptr;
+  };
+
+  iterator begin() const {
+    return iterator{m_buffer.data()};
+  }
+
+  iterator end() const {
+    return iterator{m_buffer.data() + m_buffer.size()};
+  }
+
+private:
+  std::span<std::byte> m_buffer;
+};
+
 } // namespace cool_q
