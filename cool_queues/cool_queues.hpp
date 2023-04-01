@@ -122,7 +122,7 @@ public:
     msg_header = message_header{.m_size = size};
     const std::uint64_t offset_till_end =
         header.m_capacity - header.m_end_offset;
-    header.m_end_offset = offset_till_end + sizeof(message_header) + size;
+    header.m_end_offset += offset_till_end + sizeof(message_header) + size;
     ++header.m_version;
   }
 

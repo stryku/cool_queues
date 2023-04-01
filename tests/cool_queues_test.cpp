@@ -59,6 +59,13 @@ public:
     m_consumer->poll(m_consumer_buffer);
   }
 
+  void write(std::string_view msg) {
+    m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg.size());
+      std::memcpy(buffer.data(), msg.data(), msg.size());
+    });
+  }
+
   std::array<std::byte, 1024> m_memory_buffer;
   std::array<std::byte, 1024> m_consumer_buffer;
   std::unique_ptr<producer> m_producer;
@@ -268,10 +275,24 @@ TEST_F(MessagingTest, MessagePerfectlyFills) {
 
   fill_leaving_space(wrapped_message_size_with_header);
 
-  m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
-    ASSERT_EQ(buffer.size(), msg.size());
-    std::memcpy(buffer.data(), msg.data(), msg.size());
-  });
+  write(msg);
+
+  auto result = m_consumer->poll(m_consumer_buffer);
+  ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result.m_read, msg.size() + sizeof(message_header));
+  std::string_view read_msg{
+      (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+      result.m_read - sizeof(message_header)};
+  EXPECT_EQ(read_msg, msg);
+}
+
+TEST_F(MessagingTest, MessageOneByteTooBig) {
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
+
+  fill_leaving_space(wrapped_message_size_with_header - 1);
+
+  write(msg);
 
   auto result = m_consumer->poll(m_consumer_buffer);
   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
