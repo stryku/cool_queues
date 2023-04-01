@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <random>
 #include <string>
 #include <string_view>
 
@@ -608,6 +609,46 @@ TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
         (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
         read_size - sizeof(message_header)};
     EXPECT_EQ(read_msg, msg);
+  }
+}
+
+TEST_F(MessagingTest, Random) {
+  auto header = get_header();
+
+  std::random_device rd;
+  const auto seed = rd();
+  std::mt19937 gen(seed); // Standard mersenne_twister_engine seeded with rd()
+  std::uniform_int_distribution<> distrib(0, header.m_capacity -
+                                                 sizeof(message_header));
+  std::uniform_int_distribution<char> char_distribution('a', 'z');
+
+  std::cout << "[          ] " << seed << '\n';
+
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
+
+  fill_leaving_space(wrapped_message_size_with_header - 1);
+
+  for (int i = 0; i < 10000; ++i) {
+    char c = char_distribution(gen);
+    const auto size = distrib(gen);
+    msg = std::string(size, c);
+
+    write(msg);
+
+    std::uint64_t read_size = 0;
+
+    auto result = m_consumer->poll2([&](auto new_data) {
+      read_size = new_data.size();
+      std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    });
+
+    ASSERT_EQ(result, consumer::poll_event_type::new_data) << i;
+    ASSERT_EQ(read_size, msg.size() + sizeof(message_header)) << i;
+    std::string_view read_msg{
+        (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+        read_size - sizeof(message_header)};
+    EXPECT_EQ(read_msg, msg) << i;
   }
 }
 
