@@ -10,6 +10,12 @@ namespace cool_q::test {
 
 using namespace std::literals;
 
+struct test_consumer {
+  test_consumer(std::span<std::byte> queue_buffer) : m_consumer{queue_buffer} {}
+  consumer m_consumer;
+  std::array<std::byte, 1024> m_buffer;
+};
+
 TEST(BufferTest, Constructor) {
   std::array<std::byte, 1024> memory_buffer;
   buffer buf(memory_buffer);
@@ -164,6 +170,99 @@ TEST(MessagingTest, MessagesRange) {
   for (auto read_msg : messages_range{read_data}) {
     std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
     EXPECT_EQ(read_str, messages[i++]);
+  }
+}
+
+TEST(MessagingTest, MultipleConsumers) {
+
+  std::array<std::byte, 1024> memory_buffer;
+  producer producer{memory_buffer};
+
+  int n = 100;
+  std::vector<test_consumer> consumers;
+  for (int i = 0; i < n; ++i) {
+    consumers.emplace_back(memory_buffer);
+  }
+
+  std::array messages{"111111"sv,
+                      "222222222"sv,
+                      "333333333333"sv,
+                      "444444444444444"sv,
+                      "555555555"sv,
+                      "66666"sv,
+                      "7"sv,
+                      "8888888888"sv,
+                      "9999999999"sv,
+                      "000000000000"sv};
+
+  for (auto msg : messages) {
+    producer.write(msg.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg.size());
+      std::memcpy(buffer.data(), msg.data(), msg.size());
+    });
+  }
+
+  for (int i = 0; i < n; ++i) {
+    auto &consumer = consumers[i];
+    auto result = consumer.m_consumer.poll(consumer.m_buffer);
+    ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+    std::span<std::byte> read_data{consumer.m_buffer.data(), result.m_read};
+    int msg_i = 0;
+    for (auto read_msg : messages_range{read_data}) {
+      std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+      EXPECT_EQ(read_str, messages[msg_i++]);
+    }
+  }
+}
+
+TEST(MessagingTest, MultipleConsumersMultithread) {
+
+  std::array<std::byte, 1024> memory_buffer;
+  producer producer{memory_buffer};
+
+  int n = 30;
+  std::vector<test_consumer> consumers;
+  for (int i = 0; i < n; ++i) {
+    consumers.emplace_back(memory_buffer);
+  }
+
+  std::array messages{"111111"sv,
+                      "222222222"sv,
+                      "333333333333"sv,
+                      "444444444444444"sv,
+                      "555555555"sv,
+                      "66666"sv,
+                      "7"sv,
+                      "8888888888"sv,
+                      "9999999999"sv,
+                      "000000000000"sv};
+
+  for (auto msg : messages) {
+    producer.write(msg.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg.size());
+      std::memcpy(buffer.data(), msg.data(), msg.size());
+    });
+  }
+
+  std::vector<std::thread> threads;
+
+  for (int i = 0; i < n; ++i) {
+    threads.emplace_back([&] {
+      test_consumer consumer{memory_buffer};
+      auto result = consumer.m_consumer.poll(consumer.m_buffer);
+      ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+      std::span<std::byte> read_data{consumer.m_buffer.data(), result.m_read};
+      int msg_i = 0;
+      for (auto read_msg : messages_range{read_data}) {
+        std::string_view read_str{(const char *)read_msg.data(),
+                                  read_msg.size()};
+        EXPECT_EQ(read_str, messages[msg_i++]);
+      }
+    });
+  }
+
+  for (auto &t : threads) {
+    t.join();
   }
 }
 
