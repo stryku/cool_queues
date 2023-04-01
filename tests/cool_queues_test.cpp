@@ -56,7 +56,7 @@ public:
   }
 
   void consume_everything() {
-    m_consumer->poll(m_consumer_buffer);
+    m_consumer->poll2([](auto) {});
   }
 
   void write(std::string_view msg) {
@@ -471,6 +471,29 @@ TEST_F(MessagingTest, MultipleConsumersMultithread) {
 //       result.m_read - sizeof(message_header)};
 //   EXPECT_EQ(read_msg, msg);
 // }
+
+TEST_F(MessagingTest, MessagePerfectlyFills) {
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
+
+  fill_leaving_space(wrapped_message_size_with_header);
+
+  write(msg);
+
+  std::uint64_t read_size = 0;
+
+  auto result = m_consumer->poll2([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
+  std::string_view read_msg{
+      (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+      read_size - sizeof(message_header)};
+  EXPECT_EQ(read_msg, msg);
+}
 
 // TEST_F(MessagingTest, MessageOneByteTooBig) {
 //   std::string msg(100, 'C');
