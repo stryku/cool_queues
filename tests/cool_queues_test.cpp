@@ -80,21 +80,21 @@ TEST(BufferTest, Constructor) {
   buffer buf(memory_buffer);
   auto &header = buf.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
-  // EXPECT_EQ(header.m_last_message_offset, 0);
+  EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
   EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 
-  // header.m_last_message_offset = 30;
+  header.m_last_message_offset = 30;
   header.m_end_offset = 40;
   header.m_footer_at_offset = 20;
   header.m_version = 41;
 
   buffer buf2(memory_buffer, header);
   EXPECT_EQ(header.m_header_size, sizeof(header));
-  // EXPECT_EQ(header.m_last_message_offset, 30);
+  EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
   EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);
@@ -111,7 +111,7 @@ TEST(ProducerTest, Constructor) {
   buffer buffer(memory_buffer, buffer_header{});
   auto &header = buffer.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
-  // EXPECT_EQ(header.m_last_message_offset, 0);
+  EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
   EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
@@ -127,7 +127,7 @@ TEST(ConsumerTest, Constructor) {
 
   buffer buffer(memory_buffer, buffer_header{});
   auto &header = buffer.access_header();
-  // header.m_last_message_offset = 30;
+  header.m_last_message_offset = 30;
   header.m_end_offset = 40;
   header.m_footer_at_offset = 20;
   header.m_version = 41;
@@ -135,7 +135,7 @@ TEST(ConsumerTest, Constructor) {
   consumer consumer(memory_buffer);
   // Ensure it doesn't override header
   EXPECT_EQ(header.m_header_size, sizeof(header));
-  // EXPECT_EQ(header.m_last_message_offset, 30);
+  EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
   EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);

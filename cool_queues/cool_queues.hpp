@@ -16,6 +16,9 @@ struct buffer_header {
   std::uint64_t m_header_size = 0;
   // Starting from sizeof(header). It only grows. It should be calculated %
   // m_capacity.
+  std::uint64_t m_last_message_offset = 0;
+  // Starting from sizeof(header). It only grows. It should be calculated %
+  // m_capacity.
   std::uint64_t m_end_offset = 0;
   // Starting from sizeof(header). It only grows. It should be calculated %
   // m_capacity.
