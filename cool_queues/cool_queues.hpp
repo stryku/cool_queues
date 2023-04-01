@@ -33,6 +33,10 @@ struct buffer_header {
   auto calc_footer_at_offset() const {
     return m_footer_at_offset % m_capacity;
   }
+
+  auto calc_last_message_offset() const {
+    return m_footer_at_offset % m_capacity;
+  }
 };
 
 // Space reserved at the end of memory_buffer for orchestration
@@ -173,7 +177,10 @@ public:
     const auto end_offset = header_before.calc_end_offset();
     const auto read_offset = calc_read_offset(header_before.m_capacity);
 
-    if (end_offset > read_offset) {
+    const auto size_to_read = header_before.m_end_offset - m_read_offset;
+
+    // If there was wrapping
+    if (read_offset + size_to_read <= header_before.m_capacity) {
       // Happy path, no wrapping
       std::span<std::byte> new_data =
           data.subspan(read_offset, end_offset - read_offset);
@@ -199,39 +206,73 @@ public:
 
     // Data got wrapped
 
-    const auto footer_offset = header_before.calc_footer_at_offset();
+    if (header_before.m_footer_at_offset == 0) {
+      // No footer.
 
-    std::span<std::byte> new_data =
-        data.subspan(read_offset, footer_offset - read_offset);
+      // Wrap reading offset
+      m_read_offset += header_before.m_capacity - read_offset;
 
-    if (new_data.size() <= result_buffer.size()) {
-      // Happy path, all the data fits in the result buffer.
-      std::memcpy(result_buffer.data(), new_data.data(), new_data.size());
-
-      const auto header_after = m_buffer.access_header();
-      if (header_after.m_version != header_before.m_version) {
-        // Producer wrote something in the meantime. Don't trust the data.
-        return {poll_event_type::interrupted};
+      if (header_before.m_last_message_offset - m_read_offset >=
+          header_before.m_capacity) {
+        // Sync lost
+        m_read_offset = header_before.m_last_message_offset;
+        return {poll_event_type::lost_sync};
       }
 
-      // All good. Wrap reading offset
-      m_read_offset += header_after.m_capacity - read_offset;
-      // Now, we're wrapped to the beginning of buffer. Poll again with the rest
-      // of result_buffer
+      std::span<std::byte> new_data = data.subspan(0, end_offset);
+      if (new_data.size() <= result_buffer.size()) {
+        // Happy path, all the data fits in the result buffer.
+        std::memcpy(result_buffer.data(), new_data.data(), new_data.size());
 
-      const auto next_result_buffer = result_buffer.subspan(new_data.size());
-      const poll_result result = poll(next_result_buffer);
-
-      if (result.m_event == poll_event_type::new_data) {
-        return {poll_event_type::new_data, new_data.size() + result.m_read};
-      } else {
-        // Something went wrong. Return data just from this read.
-        return {poll_event_type::new_data, new_data.size()};
+        const auto header_after = m_buffer.access_header();
+        if (header_after.m_version != header_before.m_version) {
+          // Producer wrote something in the meantime. Don't trust the data.
+          return {poll_event_type::interrupted};
+        } else {
+          // All good
+          m_read_offset = header_after.m_end_offset;
+          return {poll_event_type::new_data, new_data.size()};
+        }
       }
+
+      // Only some new data fits in result buffer. Copy as much as possible.
+      return read_message_by_message(result_buffer);
+
+    } else {
+      const auto footer_offset = header_before.calc_footer_at_offset();
+
+      std::span<std::byte> new_data =
+          data.subspan(read_offset, footer_offset - read_offset);
+
+      if (new_data.size() <= result_buffer.size()) {
+        // Happy path, all the data fits in the result buffer.
+        std::memcpy(result_buffer.data(), new_data.data(), new_data.size());
+
+        const auto header_after = m_buffer.access_header();
+        if (header_after.m_version != header_before.m_version) {
+          // Producer wrote something in the meantime. Don't trust the data.
+          return {poll_event_type::interrupted};
+        }
+
+        // All good. Wrap reading offset
+        m_read_offset += header_after.m_capacity - read_offset;
+        // Now, we're wrapped to the beginning of buffer. Poll again with the
+        // rest of result_buffer
+
+        const auto next_result_buffer = result_buffer.subspan(new_data.size());
+        const poll_result result = poll(next_result_buffer);
+
+        if (result.m_event == poll_event_type::new_data) {
+          return {poll_event_type::new_data, new_data.size() + result.m_read};
+        } else {
+          // Something went wrong. Return data just from this read.
+          return {poll_event_type::new_data, new_data.size()};
+        }
+      }
+
+      // Only some new data fits in result buffer. Copy as much as possible.
+      return read_message_by_message(result_buffer);
     }
-
-    // Only some new data fits in result buffer. Copy as much as possible.
-    return read_message_by_message(result_buffer);
   }
 
 private:
