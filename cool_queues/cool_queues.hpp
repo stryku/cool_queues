@@ -46,6 +46,7 @@ struct buffer_footer {
 
 struct message_header {
   message_size_t m_size = 0;
+  std::uint32_t m_seq = 0;
 };
 
 class buffer {
@@ -106,7 +107,7 @@ public:
 
       message_header &msg_header = reinterpret_cast<message_header &>(
           *(data.data() + header.calc_end_offset()));
-      msg_header = message_header{.m_size = size};
+      msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += sizeof(message_header) + size;
       header.m_last_message_offset =
           header.m_end_offset - (sizeof(message_header) + size);
@@ -127,9 +128,10 @@ public:
         data.subspan(sizeof(message_header), size);
     write_cb(write_buffer);
 
+    // TODO memcpy
     message_header &msg_header =
         reinterpret_cast<message_header &>(*data.data());
-    msg_header = message_header{.m_size = size};
+    msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
 
     const std::uint64_t offset_till_end =
         header.m_capacity - header.m_end_offset;
@@ -150,6 +152,7 @@ public:
 
 private:
   buffer m_buffer;
+  std::uint32_t m_seq = 0;
 };
 
 class consumer {
@@ -355,21 +358,37 @@ private:
     return m_read_offset % queue_capacity;
   }
 
-  bool did_lost_sync(const buffer_header &header) const {
-    if (header.m_footer_at_offset != 0) {
-      return header.m_end_offset - m_read_offset >= header.m_capacity;
-    } else {
-      const auto read_offset_wrapped =
-          m_read_offset +
-          (header.m_capacity - calc_read_offset(header.m_capacity));
-      return header.m_end_offset - read_offset_wrapped >= header.m_capacity;
+  //
+  bool did_lost_sync(const buffer_header &header) {
+    if (header.m_end_offset - m_read_offset < header.m_capacity) {
+      return false;
     }
+
+    // The difference is indeed more than capacity. There's a corner case of
+    // writing really big message that should not raise sync lost. Need to see
+    // if at the beginning of Q, the seq number of the message is the one
+    // expected by consumer.
+
+    const auto size_till_end =
+        header.m_capacity - calc_read_offset(header.m_capacity);
+    m_read_offset += size_till_end;
+    const auto msg_header = read_current_message_header();
+    return msg_header.m_seq != m_seq + 1;
+  }
+
+  message_header read_current_message_header() {
+    message_header hdr;
+    const auto read_ptr = m_buffer.access_data().data() +
+                          calc_read_offset(m_buffer.access_header().m_capacity);
+    std::memcpy(&hdr, read_ptr, sizeof(message_header));
+    return hdr;
   }
 
 private:
   buffer m_buffer;
   // It only grows. It should be calculated % buffer_header.m_capacity.
   std::uint64_t m_read_offset = 0;
+  std::uint32_t m_seq = 0;
   buffer_version_t m_version = 0;
 };
 
@@ -381,23 +400,23 @@ public:
     explicit iterator(std::byte *data) : m_data{data} {}
 
     std::span<std::byte> operator*() const {
-      message_size_t msg_size;
-      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
-      return std::span{m_data + sizeof(message_size_t), msg_size};
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      return std::span{m_data + sizeof(message_header), msg_header.m_size};
     }
 
     iterator &operator++() {
-      message_size_t msg_size;
-      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
-      m_data += msg_size + sizeof(message_size_t);
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      m_data += msg_header.m_size + sizeof(message_header);
       return *this;
     }
 
     iterator operator++(int) {
       auto copy = *this;
-      message_size_t msg_size;
-      std::memcpy(&msg_size, m_data, sizeof(message_size_t));
-      m_data += msg_size + sizeof(message_size_t);
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      m_data += msg_header.m_size + sizeof(message_header);
       return copy;
     }
 
