@@ -10,7 +10,7 @@ namespace cool_q {
 using message_size_t = std::uint32_t;
 using buffer_version_t = std::uint32_t;
 
-constexpr message_size_t k_end_of_messages = 0xffFFffFFffFFffFF;
+constexpr message_size_t k_end_of_messages = 0xffFFffFF;
 
 struct buffer_header {
   std::uint64_t m_header_size = 0;
@@ -76,7 +76,7 @@ public:
       : m_buffer{memory_buffer} {}
 
   template <typename WriteCallback>
-  void write(std::uint64_t size, WriteCallback &&write_cb) {
+  void write(message_size_t size, WriteCallback &&write_cb) {
     auto &header = m_buffer.access_header();
     auto data = m_buffer.access_data();
 
@@ -252,7 +252,6 @@ private:
       // We have some data. Read one message
       auto data = m_buffer.access_data();
 
-      const auto end_offset = header_before.calc_end_offset();
       const auto read_offset = calc_read_offset(header_before.m_capacity);
 
       const message_size_t msg_size =
@@ -306,6 +305,6 @@ private:
   // It only grows. It should be calculated % buffer_header.m_capacity.
   std::uint64_t m_read_offset = 0;
   buffer_version_t m_version = 0;
-}
+};
 
 } // namespace cool_q
