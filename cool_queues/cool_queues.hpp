@@ -190,7 +190,7 @@ public:
       // All good
     }
 
-    const auto read_start = m_read_offset;
+    auto read_start = m_read_offset;
     auto current_read = m_read_offset;
     auto last_seq_seen = m_seq;
 
@@ -232,7 +232,9 @@ public:
           // TODO do read
           const auto size_till_end = capacity - calc_read_offset(capacity);
           m_read_offset += size_till_end;
-          return poll_event_type::no_new_data;
+          read_start = m_read_offset;
+          current_read = m_read_offset;
+          continue;
         }
 
         const auto data = m_buffer.access_data();
