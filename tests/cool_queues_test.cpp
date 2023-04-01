@@ -37,9 +37,26 @@ public:
     m_producer = std::make_unique<producer>(m_memory_buffer);
     m_consumer = std::make_unique<consumer>(m_memory_buffer);
   }
+
   void TearDown() override {
     m_producer.reset();
     m_consumer.reset();
+  }
+
+  auto get_header() {
+    return *(reinterpret_cast<buffer_header *>(m_memory_buffer.data()));
+  }
+
+  void fill_leaving_space(std::uint64_t space_to_leave) {
+    auto header = get_header();
+    auto space_left = header.m_capacity - header.m_end_offset;
+    auto msg_size = space_left - sizeof(message_header) - space_to_leave;
+    m_producer->write(msg_size, [](auto) {});
+    consume_everything();
+  }
+
+  void consume_everything() {
+    m_consumer->poll(m_consumer_buffer);
   }
 
   std::array<std::byte, 1024> m_memory_buffer;
@@ -245,93 +262,24 @@ TEST_F(MessagingTest, MultipleConsumersMultithread) {
   }
 }
 
-// TEST(MessagingTest, BasicWrap) {
-//   std::array<std::byte, 100> memory_buffer;
-//   std::array<std::byte, 100> consumer_buffer;
-//   producer producer{memory_buffer};
-//   consumer consumer{memory_buffer};
+TEST_F(MessagingTest, MessagePerfectlyFills) {
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
 
-//   buffer buffer{memory_buffer, buffer_header{}};
-//   auto capacity = buffer.access_header().m_capacity;
-//   auto max_msg_size = capacity - sizeof(message_header);
+  fill_leaving_space(wrapped_message_size_with_header);
 
-//   // Write msg up to capacity -1
-//   producer.write(max_msg_size - 1, [](auto buffer) {
-//     std::fill(buffer.data(), buffer.data() + buffer.size(), 'X');
-//   });
+  m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
+    ASSERT_EQ(buffer.size(), msg.size());
+    std::memcpy(buffer.data(), msg.data(), msg.size());
+  });
 
-//   auto result = consumer.poll(consumer_buffer);
-//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(result.m_read, max_msg_size - 1 + sizeof(message_header));
-//   std::string_view read_msg{
-//       (const char *)(consumer_buffer.data() + sizeof(message_header)),
-//       result.m_read - sizeof(message_header)};
-//   for (auto c : read_msg) {
-//     ASSERT_EQ(c, 'X');
-//   }
-
-//   // Write
-
-//   //////////////////
-
-//   std::string msg1 = "1111";
-//   std::string msg2 = "2222222";
-
-//   // Message 1
-//   producer.write(msg1.size(), [&](std::span<std::byte> buffer) {
-//     ASSERT_EQ(buffer.size(), msg1.size());
-//     std::memcpy(buffer.data(), msg1.data(), msg1.size());
-//   });
-
-//   std::array<std::byte, 1024> consumer_buffer;
-//   auto result = consumer.poll(consumer_buffer);
-//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(result.m_read, msg1.size() + sizeof(message_header));
-//   std::string_view read_msg{
-//       (const char *)(consumer_buffer.data() + sizeof(message_header)),
-//       result.m_read - sizeof(message_header)};
-//   EXPECT_EQ(read_msg, msg1);
-
-//   // Message 2
-//   producer.write(msg2.size(), [&](std::span<std::byte> buffer) {
-//     ASSERT_EQ(buffer.size(), msg2.size());
-//     std::memcpy(buffer.data(), msg2.data(), msg2.size());
-//   });
-
-//   result = consumer.poll(consumer_buffer);
-//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(result.m_read, msg2.size() + sizeof(message_header));
-//   read_msg = std::string_view{
-//       (const char *)(consumer_buffer.data() + sizeof(message_header)),
-//       result.m_read - sizeof(message_header)};
-//   EXPECT_EQ(read_msg, msg2);
-
-//   // Message 1 and 2
-//   producer.write(msg1.size(), [&](std::span<std::byte> buffer) {
-//     ASSERT_EQ(buffer.size(), msg1.size());
-//     std::memcpy(buffer.data(), msg1.data(), msg1.size());
-//   });
-//   producer.write(msg2.size(), [&](std::span<std::byte> buffer) {
-//     ASSERT_EQ(buffer.size(), msg2.size());
-//     std::memcpy(buffer.data(), msg2.data(), msg2.size());
-//   });
-
-//   result = consumer.poll(consumer_buffer);
-//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(result.m_read,
-//             2 * sizeof(message_header) + msg1.size() + msg2.size());
-
-//   read_msg = std::string_view{
-//       (const char *)(consumer_buffer.data() + sizeof(message_header)),
-//       msg1.size()};
-//   EXPECT_EQ(read_msg, msg1);
-
-//   read_msg =
-//       std::string_view{(const char *)(consumer_buffer.data() +
-//                                       2 * sizeof(message_header) +
-//                                       msg1.size()),
-//                        msg2.size()};
-//   EXPECT_EQ(read_msg, msg2);
-// }
+  auto result = m_consumer->poll(m_consumer_buffer);
+  ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result.m_read, msg.size() + sizeof(message_header));
+  std::string_view read_msg{
+      (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+      result.m_read - sizeof(message_header)};
+  EXPECT_EQ(read_msg, msg);
+}
 
 } // namespace cool_q::test

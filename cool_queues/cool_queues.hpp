@@ -88,7 +88,7 @@ public:
     const std::uint64_t available_capacity =
         header.m_capacity - header.calc_end_offset();
 
-    if (available_capacity > sizeof(message_header) + size) {
+    if (available_capacity >= sizeof(message_header) + size) {
       // Happy path, message fits in available space
       ++header.m_version;
 
