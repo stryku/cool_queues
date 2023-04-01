@@ -10,6 +10,19 @@ namespace cool_q::test {
 
 using namespace std::literals;
 
+namespace {
+constexpr std::array k_messages{"111111"sv,
+                                "222222222"sv,
+                                "333333333333"sv,
+                                "444444444444444"sv,
+                                "555555555"sv,
+                                "66666"sv,
+                                "7"sv,
+                                "8888888888"sv,
+                                "9999999999"sv,
+                                "000000000000"sv};
+}
+
 struct test_consumer {
   test_consumer(std::span<std::byte> queue_buffer) : m_consumer{queue_buffer} {}
   consumer m_consumer;
@@ -145,18 +158,7 @@ TEST(MessagingTest, MessagesRange) {
   producer producer{memory_buffer};
   consumer consumer{memory_buffer};
 
-  std::array messages{"111111"sv,
-                      "222222222"sv,
-                      "333333333333"sv,
-                      "444444444444444"sv,
-                      "555555555"sv,
-                      "66666"sv,
-                      "7"sv,
-                      "8888888888"sv,
-                      "9999999999"sv,
-                      "000000000000"sv};
-
-  for (auto msg : messages) {
+  for (auto msg : k_messages) {
     producer.write(msg.size(), [&](std::span<std::byte> buffer) {
       ASSERT_EQ(buffer.size(), msg.size());
       std::memcpy(buffer.data(), msg.data(), msg.size());
@@ -169,7 +171,7 @@ TEST(MessagingTest, MessagesRange) {
   int i = 0;
   for (auto read_msg : messages_range{read_data}) {
     std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
-    EXPECT_EQ(read_str, messages[i++]);
+    EXPECT_EQ(read_str, k_messages[i++]);
   }
 }
 
@@ -184,18 +186,7 @@ TEST(MessagingTest, MultipleConsumers) {
     consumers.emplace_back(memory_buffer);
   }
 
-  std::array messages{"111111"sv,
-                      "222222222"sv,
-                      "333333333333"sv,
-                      "444444444444444"sv,
-                      "555555555"sv,
-                      "66666"sv,
-                      "7"sv,
-                      "8888888888"sv,
-                      "9999999999"sv,
-                      "000000000000"sv};
-
-  for (auto msg : messages) {
+  for (auto msg : k_messages) {
     producer.write(msg.size(), [&](std::span<std::byte> buffer) {
       ASSERT_EQ(buffer.size(), msg.size());
       std::memcpy(buffer.data(), msg.data(), msg.size());
@@ -210,7 +201,7 @@ TEST(MessagingTest, MultipleConsumers) {
     int msg_i = 0;
     for (auto read_msg : messages_range{read_data}) {
       std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
-      EXPECT_EQ(read_str, messages[msg_i++]);
+      EXPECT_EQ(read_str, k_messages[msg_i++]);
     }
   }
 }
@@ -220,24 +211,7 @@ TEST(MessagingTest, MultipleConsumersMultithread) {
   std::array<std::byte, 1024> memory_buffer;
   producer producer{memory_buffer};
 
-  int n = 30;
-  std::vector<test_consumer> consumers;
-  for (int i = 0; i < n; ++i) {
-    consumers.emplace_back(memory_buffer);
-  }
-
-  std::array messages{"111111"sv,
-                      "222222222"sv,
-                      "333333333333"sv,
-                      "444444444444444"sv,
-                      "555555555"sv,
-                      "66666"sv,
-                      "7"sv,
-                      "8888888888"sv,
-                      "9999999999"sv,
-                      "000000000000"sv};
-
-  for (auto msg : messages) {
+  for (auto msg : k_messages) {
     producer.write(msg.size(), [&](std::span<std::byte> buffer) {
       ASSERT_EQ(buffer.size(), msg.size());
       std::memcpy(buffer.data(), msg.data(), msg.size());
@@ -246,6 +220,7 @@ TEST(MessagingTest, MultipleConsumersMultithread) {
 
   std::vector<std::thread> threads;
 
+  int n = 30;
   for (int i = 0; i < n; ++i) {
     threads.emplace_back([&] {
       test_consumer consumer{memory_buffer};
@@ -256,7 +231,7 @@ TEST(MessagingTest, MultipleConsumersMultithread) {
       for (auto read_msg : messages_range{read_data}) {
         std::string_view read_str{(const char *)read_msg.data(),
                                   read_msg.size()};
-        EXPECT_EQ(read_str, messages[msg_i++]);
+        EXPECT_EQ(read_str, k_messages[msg_i++]);
       }
     });
   }
