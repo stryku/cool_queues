@@ -94,8 +94,17 @@ public:
       throw std::runtime_error{"Q too small"};
     }
 
-    const std::uint64_t available_capacity =
-        header.m_capacity - header.calc_end_offset();
+    const std::uint64_t available_capacity = [&] {
+      const auto calced_end_offset = header.calc_end_offset();
+      if (header.m_end_offset != 0) {
+        if (calced_end_offset == 0) {
+          return std::uint64_t{0};
+        }
+        return header.m_capacity - calced_end_offset;
+      }
+
+      return header.m_capacity;
+    }();
 
     if (available_capacity >= sizeof(message_header) + size) {
       // Happy path, message fits in available space
@@ -120,8 +129,12 @@ public:
 
     // Write footer
     const buffer_footer footer{};
-    std::memcpy(data.data() + header.calc_end_offset(), &footer,
-                sizeof(footer));
+    if (header.calc_end_offset() == 0) {
+      std::memcpy(data.data() + header.m_capacity, &footer, sizeof(footer));
+    } else {
+      std::memcpy(data.data() + header.calc_end_offset(), &footer,
+                  sizeof(footer));
+    }
     header.m_footer_at_offset = header.m_end_offset;
 
     std::span<std::byte> write_buffer =
@@ -134,7 +147,7 @@ public:
     msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
 
     const std::uint64_t offset_till_end =
-        header.m_capacity - header.m_end_offset;
+        header.m_capacity - header.calc_end_offset();
 
     // Basically point on the beginning of the Q.
 
