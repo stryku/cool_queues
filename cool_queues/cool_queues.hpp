@@ -103,6 +103,7 @@ public:
       message_header &msg_header = reinterpret_cast<message_header &>(
           *(data.data() + header.calc_end_offset()));
       msg_header = message_header{.m_size = size};
+      header.m_last_message_offset = header.m_end_offset;
       header.m_end_offset += sizeof(message_header) + size;
       ++header.m_version;
       return;
@@ -124,9 +125,20 @@ public:
     message_header &msg_header =
         reinterpret_cast<message_header &>(*data.data());
     msg_header = message_header{.m_size = size};
+
     const std::uint64_t offset_till_end =
         header.m_capacity - header.m_end_offset;
+
+    // Basically point on the beginning of the Q.
+    header.m_last_message_offset += offset_till_end;
+
     header.m_end_offset += offset_till_end + sizeof(message_header) + size;
+
+    if (header.calc_end_offset() >= header.calc_footer_at_offset()) {
+      // The new wrapped message was so big that if overwritten the footer.
+      // There's no footer now.
+      header.m_footer_at_offset = 0;
+    }
     ++header.m_version;
   }
 
@@ -185,7 +197,7 @@ public:
       return read_message_by_message(result_buffer);
     }
 
-    // Data got wrapped, read till the end
+    // Data got wrapped
 
     const auto footer_offset = header_before.calc_footer_at_offset();
 
