@@ -416,6 +416,44 @@ TEST_F(MessagingTest, MultipleConsumers) {
 //   }
 // }
 
+TEST_F(MessagingTest, MultipleConsumersMultithread) {
+
+  for (auto msg : k_messages) {
+    m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg.size());
+      std::memcpy(buffer.data(), msg.data(), msg.size());
+    });
+  }
+
+  std::vector<std::thread> threads;
+
+  int n = 30;
+  for (int i = 0; i < n; ++i) {
+    threads.emplace_back([&] {
+      test_consumer consumer{m_memory_buffer};
+      std::uint64_t read_size = 0;
+
+      auto result = consumer.m_consumer.poll2([&](auto new_data) {
+        read_size = new_data.size();
+        std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
+      });
+
+      ASSERT_EQ(result, consumer::poll_event_type::new_data);
+      std::span<std::byte> read_data{consumer.m_buffer.data(), read_size};
+      int msg_i = 0;
+      for (auto read_msg : messages_range{read_data}) {
+        std::string_view read_str{(const char *)read_msg.data(),
+                                  read_msg.size()};
+        EXPECT_EQ(read_str, k_messages[msg_i++]);
+      }
+    });
+  }
+
+  for (auto &t : threads) {
+    t.join();
+  }
+}
+
 // TEST_F(MessagingTest, MessagePerfectlyFills) {
 //   std::string msg(100, 'C');
 //   auto wrapped_message_size_with_header = msg.size() +
