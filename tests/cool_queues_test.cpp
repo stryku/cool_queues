@@ -316,25 +316,24 @@ TEST_F(MessagingTest, MessageOneByteTooBig) {
   EXPECT_EQ(read_msg, msg);
 }
 
-// TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
-//   auto header = get_header();
-//   std::string msg(100, 'C');
-//   auto wrapped_message_size_with_header = msg.size() +
-//   sizeof(message_header);
+TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
+  auto header = get_header();
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
 
-//   fill_leaving_space(wrapped_message_size_with_header - 1);
+  fill_leaving_space(wrapped_message_size_with_header - 1);
 
-//   msg = std::string(header.m_capacity - sizeof(message_header), 'c');
+  msg = std::string(header.m_capacity - sizeof(message_header), 'c');
 
-//   write(msg);
+  write(msg);
 
-//   auto result = m_consumer->poll(m_consumer_buffer);
-//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(result.m_read, msg.size() + sizeof(message_header));
-//   std::string_view read_msg{
-//       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
-//       result.m_read - sizeof(message_header)};
-//   EXPECT_EQ(read_msg, msg);
-// }
+  auto result = m_consumer->poll(m_consumer_buffer);
+  ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result.m_read, msg.size() + sizeof(message_header));
+  std::string_view read_msg{
+      (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+      result.m_read - sizeof(message_header)};
+  EXPECT_EQ(read_msg, msg);
+}
 
 } // namespace cool_q::test

@@ -107,8 +107,9 @@ public:
       message_header &msg_header = reinterpret_cast<message_header &>(
           *(data.data() + header.calc_end_offset()));
       msg_header = message_header{.m_size = size};
-      header.m_last_message_offset = header.m_end_offset;
       header.m_end_offset += sizeof(message_header) + size;
+      header.m_last_message_offset =
+          header.m_end_offset - (sizeof(message_header) + size);
       ++header.m_version;
       return;
     }
@@ -134,11 +135,12 @@ public:
         header.m_capacity - header.m_end_offset;
 
     // Basically point on the beginning of the Q.
-    header.m_last_message_offset += offset_till_end;
 
     header.m_end_offset += offset_till_end + sizeof(message_header) + size;
+    header.m_last_message_offset =
+        header.m_end_offset - (sizeof(message_header) + size);
 
-    if (header.calc_end_offset() >= header.calc_footer_at_offset()) {
+    if (header.m_footer_at_offset + header.m_capacity <= header.m_end_offset) {
       // The new wrapped message was so big that if overwritten the footer.
       // There's no footer now.
       header.m_footer_at_offset = 0;
@@ -354,7 +356,14 @@ private:
   }
 
   bool did_lost_sync(const buffer_header &header) const {
-    return header.m_end_offset - m_read_offset >= header.m_capacity;
+    if (header.m_footer_at_offset != 0) {
+      return header.m_end_offset - m_read_offset >= header.m_capacity;
+    } else {
+      const auto read_offset_wrapped =
+          m_read_offset +
+          (header.m_capacity - calc_read_offset(header.m_capacity));
+      return header.m_end_offset - read_offset_wrapped >= header.m_capacity;
+    }
   }
 
 private:
