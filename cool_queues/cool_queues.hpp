@@ -62,6 +62,7 @@ public:
     return reinterpret_cast<buffer_header &>(*m_buffer.data());
   }
 
+  // Returns buffer including space for footer.
   std::span<std::byte> access_data() const {
     return m_buffer.subspan(sizeof(buffer_header));
   }
@@ -80,7 +81,7 @@ public:
     auto &header = m_buffer.access_header();
     auto data = m_buffer.access_data();
 
-    if (size > data.size()) {
+    if (sizeof(message_header) + size > header.m_capacity) {
       // TODO: throw proper type
       throw std::runtime_error{"Q too small"};
     }

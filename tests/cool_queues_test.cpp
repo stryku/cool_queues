@@ -74,21 +74,27 @@ public:
 
 TEST(BufferTest, Constructor) {
   std::array<std::byte, 1024> memory_buffer;
+
+  std::fill(memory_buffer.begin(), memory_buffer.end(), std::byte{0xff});
+
   buffer buf(memory_buffer);
   auto &header = buf.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
+  // EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
   EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 
+  // header.m_last_message_offset = 30;
   header.m_end_offset = 40;
   header.m_footer_at_offset = 20;
   header.m_version = 41;
 
   buffer buf2(memory_buffer, header);
   EXPECT_EQ(header.m_header_size, sizeof(header));
+  // EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
   EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);
@@ -98,11 +104,14 @@ TEST(BufferTest, Constructor) {
 
 TEST(ProducerTest, Constructor) {
   std::array<std::byte, 1024> memory_buffer;
+  std::fill(memory_buffer.begin(), memory_buffer.end(), std::byte{0xff});
+
   producer producer{memory_buffer};
 
   buffer buffer(memory_buffer, buffer_header{});
   auto &header = buffer.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
+  // EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
   EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
@@ -112,10 +121,13 @@ TEST(ProducerTest, Constructor) {
 
 TEST(ConsumerTest, Constructor) {
   std::array<std::byte, 1024> memory_buffer;
+  std::fill(memory_buffer.begin(), memory_buffer.end(), std::byte{0xff});
+
   producer producer{memory_buffer};
 
   buffer buffer(memory_buffer, buffer_header{});
   auto &header = buffer.access_header();
+  // header.m_last_message_offset = 30;
   header.m_end_offset = 40;
   header.m_footer_at_offset = 20;
   header.m_version = 41;
@@ -123,6 +135,7 @@ TEST(ConsumerTest, Constructor) {
   consumer consumer(memory_buffer);
   // Ensure it doesn't override header
   EXPECT_EQ(header.m_header_size, sizeof(header));
+  // EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
   EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);
@@ -302,5 +315,26 @@ TEST_F(MessagingTest, MessageOneByteTooBig) {
       result.m_read - sizeof(message_header)};
   EXPECT_EQ(read_msg, msg);
 }
+
+// TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
+//   auto header = get_header();
+//   std::string msg(100, 'C');
+//   auto wrapped_message_size_with_header = msg.size() +
+//   sizeof(message_header);
+
+//   fill_leaving_space(wrapped_message_size_with_header - 1);
+
+//   msg = std::string(header.m_capacity - sizeof(message_header), 'c');
+
+//   write(msg);
+
+//   auto result = m_consumer->poll(m_consumer_buffer);
+//   ASSERT_EQ(result.m_event, consumer::poll_event_type::new_data);
+//   ASSERT_EQ(result.m_read, msg.size() + sizeof(message_header));
+//   std::string_view read_msg{
+//       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+//       result.m_read - sizeof(message_header)};
+//   EXPECT_EQ(read_msg, msg);
+// }
 
 } // namespace cool_q::test
