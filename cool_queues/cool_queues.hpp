@@ -146,8 +146,7 @@ public:
         reinterpret_cast<message_header &>(*data.data());
     msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
 
-    const std::uint64_t offset_till_end =
-        header.m_capacity - header.calc_end_offset();
+    const std::uint64_t offset_till_end = available_capacity;
 
     // Basically point on the beginning of the Q.
 
@@ -189,7 +188,7 @@ public:
 
     // Check sync lost
     {
-      if (header_before.m_end_offset - m_read_offset >= capacity) {
+      if (header_before.m_end_offset - m_read_offset > capacity) {
         // Overrun. Need to go to begin.
         const auto size_till_end = capacity - calc_read_offset(capacity);
         m_read_offset += size_till_end;
@@ -234,8 +233,8 @@ public:
         }
       }
 
-      const message_header msg_header = read_message_header_at(current_read);
-      if (msg_header.m_size == k_end_of_messages) {
+      const message_size_t msg_size = read_message_size_at(current_read);
+      if (msg_size == k_end_of_messages) {
         // Went all the way to the end of messages. There may be new messages
         // wrapped. They will be read in the next poll calls.
 
@@ -265,6 +264,7 @@ public:
       }
 
       // Got new message. Acknowledge it and iterate again.
+      const auto msg_header = read_message_header_at(current_read);
       current_read += msg_header.m_size + sizeof(message_header);
       last_seq_seen = msg_header.m_seq;
     }
@@ -483,8 +483,24 @@ private:
     return read_message_header_at(m_read_offset);
   }
 
+  message_size_t read_message_size_at(std::uint64_t offset) {
+    message_size_t size;
+
+    if (offset != 0) {
+      const auto modulo = offset % m_buffer.access_header().m_capacity;
+      if (modulo != 0) {
+        offset = modulo;
+      }
+    }
+
+    const auto read_ptr = m_buffer.access_data().data() + offset;
+    std::memcpy(&size, read_ptr, sizeof(message_size_t));
+    return size;
+  }
+
   message_header read_message_header_at(std::uint64_t offset) {
     message_header hdr;
+
     const auto read_ptr = m_buffer.access_data().data() +
                           (offset % m_buffer.access_header().m_capacity);
     std::memcpy(&hdr, read_ptr, sizeof(message_header));

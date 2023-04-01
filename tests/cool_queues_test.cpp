@@ -44,6 +44,17 @@ public:
     m_consumer.reset();
   }
 
+  void resetup(std::uint64_t capacity) {
+    assert(capacity + sizeof(buffer_header) + sizeof(buffer_footer) <=
+           m_memory_buffer.size());
+
+    std::span<std::byte> buffer{m_memory_buffer.data(),
+                                capacity + sizeof(buffer_header) +
+                                    sizeof(buffer_footer)};
+    m_producer = std::make_unique<producer>(buffer);
+    m_consumer = std::make_unique<consumer>(buffer);
+  }
+
   auto get_header() {
     return *(reinterpret_cast<buffer_header *>(m_memory_buffer.data()));
   }
@@ -584,6 +595,60 @@ TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
   EXPECT_EQ(read_msg, msg);
 }
 
+TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
+
+  resetup(100);
+
+  // Fill up to 40
+  fill_leaving_space(60);
+  consume_everything();
+
+  // Write 5 messages 20 bytes each (including message header). This should
+  // fill whole Q without overrunning consumer
+  const auto message_size = 20 - sizeof(message_header);
+
+  for (char c = '0'; c < '5'; ++c) {
+    auto msg = std::string(message_size, c);
+    write(std::string(message_size, c));
+  }
+
+  std::uint64_t read_size = 0;
+
+  // This should return data. 3 messages from the beginning, starting from '0'
+  auto result = m_consumer->poll2([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, 60);
+  char expected = '0';
+
+  std::span<std::byte> read_data{m_consumer_buffer.data(), read_size};
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    EXPECT_EQ(read_str, std::string(message_size, expected));
+    ++expected;
+  }
+
+  // This should return data. 2 messages from the beginning, starting from '3'
+  result = m_consumer->poll2([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, 20);
+  expected = '3';
+
+  read_data = std::span<std::byte>{m_consumer_buffer.data(), read_size};
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    EXPECT_EQ(read_str, std::string(message_size, expected));
+    ++expected;
+  }
+}
+
 TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
   auto header = get_header();
   std::string msg(100, 'C');
@@ -649,6 +714,52 @@ TEST_F(MessagingTest, Random) {
         (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
         read_size - sizeof(message_header)};
     EXPECT_EQ(read_msg, msg) << i;
+  }
+}
+
+TEST_F(MessagingTest, SyncLost) {
+
+  resetup(100);
+
+  // Fill up to 40
+  fill_leaving_space(60);
+  consume_everything();
+
+  // Write 6 messages 20 bytes each (including message header). This should
+  // overrun consumer and it should be able to read 3 messages from the
+  // beginning, starting from '3'.
+  const auto message_size = 20 - sizeof(message_header);
+
+  for (char c = '0'; c < '6'; ++c) {
+    auto msg = std::string(message_size, c);
+    write(std::string(message_size, c));
+  }
+
+  std::uint64_t read_size = 0;
+
+  // This should los sync.
+  auto result = m_consumer->poll2([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
+
+  // This should return data. 3 messages from the beginning, starting from '3'
+  result = m_consumer->poll2([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, 60);
+  char expected = '3';
+
+  std::span<std::byte> read_data{m_consumer_buffer.data(), read_size};
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    EXPECT_EQ(read_str, std::string(message_size, expected));
+    ++expected;
   }
 }
 
