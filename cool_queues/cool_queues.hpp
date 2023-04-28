@@ -156,7 +156,7 @@ public:
       : m_buffer{memory_buffer,
                  reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
 
-  template <typename PollCallback> poll_event_type poll3(PollCallback poll_cb) {
+  template <typename PollCallback> poll_event_type poll(PollCallback poll_cb) {
     const auto header_before = m_buffer.access_header();
     const auto capacity = header_before.m_capacity;
     if (header_before.m_version == m_version) {

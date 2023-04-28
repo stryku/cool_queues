@@ -68,7 +68,7 @@ public:
   }
 
   void consume_everything() {
-    m_consumer->poll3([](auto) {});
+    m_consumer->poll([](auto) {});
   }
 
   void write(std::string_view msg) {
@@ -156,7 +156,7 @@ TEST_F(MessagingTest, BasicTest) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -174,7 +174,7 @@ TEST_F(MessagingTest, BasicTest) {
     std::memcpy(buffer.data(), msg2.data(), msg2.size());
   });
 
-  result = m_consumer->poll3([&](auto new_data) {
+  result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -196,7 +196,7 @@ TEST_F(MessagingTest, BasicTest) {
     std::memcpy(buffer.data(), msg2.data(), msg2.size());
   });
 
-  result = m_consumer->poll3([&](auto new_data) {
+  result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -227,7 +227,7 @@ TEST_F(MessagingTest, MessagesRange) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -261,7 +261,7 @@ TEST_F(MessagingTest, MultipleConsumers) {
 
     std::uint64_t read_size = 0;
 
-    auto result = consumer.m_consumer.poll3([&](auto new_data) {
+    auto result = consumer.m_consumer.poll([&](auto new_data) {
       read_size = new_data.size();
       std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
     });
@@ -293,7 +293,7 @@ TEST_F(MessagingTest, MultipleConsumersMultithread) {
       test_consumer consumer{m_memory_buffer};
       std::uint64_t read_size = 0;
 
-      auto result = consumer.m_consumer.poll3([&](auto new_data) {
+      auto result = consumer.m_consumer.poll([&](auto new_data) {
         read_size = new_data.size();
         std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
       });
@@ -324,7 +324,7 @@ TEST_F(MessagingTest, MessagePerfectlyFills) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -347,7 +347,7 @@ TEST_F(MessagingTest, MessageOneByteTooBig) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -373,7 +373,7 @@ TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -406,7 +406,7 @@ TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
   std::uint64_t read_size = 0;
 
   // This should return data. 3 messages from the beginning, starting from '0'
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -423,7 +423,7 @@ TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
   }
 
   // This should return data. 2 messages from the beginning, starting from '3'
-  result = m_consumer->poll3([&](auto new_data) {
+  result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -454,7 +454,7 @@ TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
 
     std::uint64_t read_size = 0;
 
-    auto result = m_consumer->poll3([&](auto new_data) {
+    auto result = m_consumer->poll([&](auto new_data) {
       read_size = new_data.size();
       std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
     });
@@ -494,7 +494,7 @@ TEST_F(MessagingTest, Random) {
 
     std::uint64_t read_size = 0;
 
-    auto result = m_consumer->poll3([&](auto new_data) {
+    auto result = m_consumer->poll([&](auto new_data) {
       read_size = new_data.size();
       std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
     });
@@ -529,7 +529,7 @@ TEST_F(MessagingTest, SyncLost) {
   std::uint64_t read_size = 0;
 
   // This should los sync.
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -537,7 +537,7 @@ TEST_F(MessagingTest, SyncLost) {
   ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
 
   // This should return data. 3 messages from the beginning, starting from '3'
-  result = m_consumer->poll3([&](auto new_data) {
+  result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -567,7 +567,7 @@ TEST_F(MessagingTest, Interrupted) {
 
   std::uint64_t read_size = 0;
 
-  auto result = m_consumer->poll3([&](auto new_data) {
+  auto result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
 
@@ -580,7 +580,7 @@ TEST_F(MessagingTest, Interrupted) {
 
   ASSERT_EQ(result, consumer::poll_event_type::interrupted);
 
-  result = m_consumer->poll3([&](auto new_data) {
+  result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
@@ -611,7 +611,7 @@ TEST_F(MessagingTest, Interrupted) {
   //   std::memcpy(buffer.data(), msg2.data(), msg2.size());
   // });
 
-  // result = m_consumer->poll3([&](auto new_data) {
+  // result = m_consumer->poll([&](auto new_data) {
   //   read_size = new_data.size();
   //   std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   // });
