@@ -179,6 +179,99 @@ public:
       : m_buffer{memory_buffer,
                  reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
 
+  template <typename PollCallback> poll_event_type poll3(PollCallback poll_cb) {
+    const auto header_before = m_buffer.access_header();
+    const auto capacity = header_before.m_capacity;
+    if (header_before.m_version == m_version) {
+      return poll_event_type::no_new_data;
+    }
+
+    // // Check sync lost
+    // {
+    //   if (header_before.m_end_offset - m_read_offset > capacity) {
+    //     // Overrun. Need to go to begin.
+    //     const auto size_till_end = capacity - calc_read_offset(capacity);
+    //     m_read_offset += size_till_end;
+    //     const auto msg_header = read_current_message_header();
+    //     if (msg_header.m_seq != m_seq + 1) {
+    //       // Sync lost
+    //       return poll_event_type::lost_sync;
+    //     }
+    //   }
+
+    //   // All good
+    // }
+
+    auto read_start = m_read_offset;
+    auto current_read = m_read_offset;
+    auto last_seq_seen = m_seq;
+
+    while (true) {
+      if (m_buffer.access_header().m_version != header_before.m_version) {
+        return poll_event_type::interrupted;
+      }
+
+      if (current_read == header_before.m_end_offset) {
+        // No more data to read.
+
+        if (current_read == read_start) {
+          // TODO can ever happen?
+          return poll_event_type::no_new_data;
+        }
+
+        // Did read some
+        const auto data = m_buffer.access_data();
+        std::span<std::byte> new_data{data.data() +
+                                          (read_start - m_queue_wrap_offset),
+                                      current_read - read_start};
+        poll_cb(new_data);
+        if (m_buffer.access_header().m_version != header_before.m_version) {
+          return poll_event_type::interrupted;
+        } else {
+          m_seq = last_seq_seen;
+          m_read_offset = current_read;
+          return poll_event_type::new_data;
+        }
+      }
+
+      const message_size_t msg_size = read_message_size_at3(current_read);
+      if (msg_size == k_end_of_messages) {
+        // Went all the way to the end of messages. There may be new messages
+        // wrapped. They will be read in the next poll calls.
+
+        // TODO Need to wrap
+        if (current_read == read_start) {
+          // Didn't read nothing.
+          // TODO do read
+          m_queue_wrap_offset += capacity;
+          m_read_offset = m_queue_wrap_offset;
+          read_start = m_read_offset;
+          current_read = m_read_offset;
+          continue;
+        }
+
+        const auto data = m_buffer.access_data();
+        std::span<std::byte> new_data{data.data() +
+                                          (read_start - m_queue_wrap_offset),
+                                      current_read - read_start};
+        poll_cb(new_data);
+        if (m_buffer.access_header().m_version != header_before.m_version) {
+          return poll_event_type::interrupted;
+        } else {
+          m_queue_wrap_offset += capacity;
+          m_read_offset = m_queue_wrap_offset;
+          m_seq = last_seq_seen;
+          return poll_event_type::new_data;
+        }
+      }
+
+      // Got new message. Acknowledge it and iterate again.
+      const auto msg_header = read_message_header_at(current_read);
+      current_read += msg_header.m_size + sizeof(message_header);
+      last_seq_seen = msg_header.m_seq;
+    }
+  }
+
   template <typename PollCallback> poll_event_type poll2(PollCallback poll_cb) {
     const auto header_before = m_buffer.access_header();
     const auto capacity = header_before.m_capacity;
@@ -457,6 +550,10 @@ private:
     }
   }
 
+  std::uint64_t calc_read_offset3() const {
+    return m_read_offset - m_queue_wrap_offset;
+  }
+
   std::uint64_t calc_read_offset(std::uint64_t queue_capacity) const {
     return m_read_offset % queue_capacity;
   }
@@ -483,6 +580,15 @@ private:
     return read_message_header_at(m_read_offset);
   }
 
+  message_size_t read_message_size_at3(std::uint64_t offset) {
+    message_size_t size;
+
+    const auto read_ptr =
+        m_buffer.access_data().data() + (offset - m_queue_wrap_offset);
+    std::memcpy(&size, read_ptr, sizeof(message_size_t));
+    return size;
+  }
+
   message_size_t read_message_size_at(std::uint64_t offset) {
     message_size_t size;
 
@@ -498,6 +604,15 @@ private:
     return size;
   }
 
+  message_header read_message_header_at3(std::uint64_t offset) {
+    message_header hdr;
+
+    const std::byte *read_ptr =
+        m_buffer.access_data().data() + (offset - m_queue_wrap_offset);
+    std::memcpy(&hdr, read_ptr, sizeof(message_header));
+    return hdr;
+  }
+
   message_header read_message_header_at(std::uint64_t offset) {
     message_header hdr;
 
@@ -511,6 +626,7 @@ private:
   buffer m_buffer;
   // It only grows. It should be calculated % buffer_header.m_capacity.
   std::uint64_t m_read_offset = 0;
+  std::uint64_t m_queue_wrap_offset = 0;
   std::uint32_t m_seq = 0;
   buffer_version_t m_version = 0;
 };
