@@ -21,22 +21,11 @@ struct buffer_header {
   // message. Starting from sizeof(header). It only grows. It should be
   // calculated % m_capacity.
   std::uint64_t m_end_offset = 0;
-  // Starting from sizeof(header). It only grows. It should be calculated %
-  // m_capacity.
-  std::uint64_t m_footer_at_offset = 0;
   buffer_version_t m_version = 0;
   std::uint64_t m_capacity = 0; // Without header
 
   auto calc_end_offset() const {
     return m_end_offset % m_capacity;
-  }
-
-  auto calc_footer_at_offset() const {
-    return m_footer_at_offset % m_capacity;
-  }
-
-  auto calc_last_message_offset() const {
-    return m_footer_at_offset % m_capacity;
   }
 };
 
@@ -136,7 +125,6 @@ public:
       std::memcpy(data.data() + header.calc_end_offset(), &footer,
                   sizeof(footer));
     }
-    header.m_footer_at_offset = header.m_end_offset;
 
     std::span<std::byte> write_buffer =
         data.subspan(sizeof(message_header), size);
@@ -155,11 +143,6 @@ public:
     header.m_last_message_offset =
         header.m_end_offset - (sizeof(message_header) + size);
 
-    if (header.m_footer_at_offset + header.m_capacity <= header.m_end_offset) {
-      // The new wrapped message was so big that if overwritten the footer.
-      // There's no footer now.
-      header.m_footer_at_offset = 0;
-    }
     ++header.m_version;
   }
 

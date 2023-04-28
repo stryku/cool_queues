@@ -94,21 +94,18 @@ TEST(BufferTest, Constructor) {
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
-  EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 
   header.m_last_message_offset = 30;
   header.m_end_offset = 40;
-  header.m_footer_at_offset = 20;
   header.m_version = 41;
 
   buffer buf2(memory_buffer, header);
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
-  EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
@@ -125,7 +122,6 @@ TEST(ProducerTest, Constructor) {
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_last_message_offset, 0);
   EXPECT_EQ(header.m_end_offset, 0);
-  EXPECT_EQ(header.m_footer_at_offset, 0);
   EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
@@ -141,7 +137,6 @@ TEST(ConsumerTest, Constructor) {
   auto &header = buffer.access_header();
   header.m_last_message_offset = 30;
   header.m_end_offset = 40;
-  header.m_footer_at_offset = 20;
   header.m_version = 41;
 
   consumer consumer(memory_buffer);
@@ -149,7 +144,6 @@ TEST(ConsumerTest, Constructor) {
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_last_message_offset, 30);
   EXPECT_EQ(header.m_end_offset, 40);
-  EXPECT_EQ(header.m_footer_at_offset, 20);
   EXPECT_EQ(header.m_version, 41);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
