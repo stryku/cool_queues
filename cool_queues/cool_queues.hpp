@@ -158,9 +158,6 @@ public:
   poll_event_type poll(auto poll_cb) {
     const auto header_before = m_buffer.access_header();
     const auto capacity = header_before.m_capacity;
-    if (header_before.m_version == m_version) {
-      return poll_event_type::no_new_data;
-    }
 
     // Check sync lost
     {
@@ -189,7 +186,7 @@ public:
     auto last_seq_seen = m_seq;
 
     while (true) {
-      if (m_buffer.access_header().m_version != header_before.m_version) {
+      if (m_buffer.access_header().m_end_offset != header_before.m_end_offset) {
         return poll_event_type::interrupted;
       }
 
@@ -207,7 +204,8 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (m_buffer.access_header().m_version != header_before.m_version) {
+        if (m_buffer.access_header().m_end_offset !=
+            header_before.m_end_offset) {
           return poll_event_type::interrupted;
         } else {
           m_seq = last_seq_seen;
@@ -237,7 +235,8 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (m_buffer.access_header().m_version != header_before.m_version) {
+        if (m_buffer.access_header().m_end_offset !=
+            header_before.m_end_offset) {
           return poll_event_type::interrupted;
         } else {
           m_queue_wrap_offset += capacity;
@@ -283,7 +282,6 @@ private:
   std::uint64_t m_read_offset = 0;
   std::uint64_t m_queue_wrap_offset = 0;
   std::uint32_t m_seq = 0;
-  buffer_version_t m_version = 0;
 };
 
 class messages_range {
