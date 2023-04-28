@@ -14,9 +14,6 @@ constexpr message_size_t k_end_of_messages = 0xffFFffFF;
 
 struct buffer_header {
   std::uint64_t m_header_size = 0;
-  // Starting from sizeof(header). It only grows. It should be calculated %
-  // m_capacity.
-  std::uint64_t m_last_message_offset = 0;
   // Offset of the end of data known to producer. The end of the last written
   // message. Starting from sizeof(header). It only grows. It should be
   // calculated % m_capacity.
@@ -108,8 +105,6 @@ public:
           *(data.data() + header.calc_end_offset()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += sizeof(message_header) + size;
-      header.m_last_message_offset =
-          header.m_end_offset - (sizeof(message_header) + size);
       ++header.m_version;
       return;
     }
@@ -140,8 +135,6 @@ public:
     // Basically point on the beginning of the Q.
 
     header.m_end_offset += offset_till_end + sizeof(message_header) + size;
-    header.m_last_message_offset =
-        header.m_end_offset - (sizeof(message_header) + size);
 
     ++header.m_version;
   }
