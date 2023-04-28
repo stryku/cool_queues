@@ -71,8 +71,7 @@ public:
   explicit producer(std::span<std::byte> memory_buffer)
       : m_buffer{memory_buffer} {}
 
-  template <typename WriteCallback>
-  void write(message_size_t size, WriteCallback &&write_cb) {
+  void write(message_size_t size, auto &&write_cb) {
     auto &header = m_buffer.access_header();
     auto data = m_buffer.access_data();
 
@@ -156,7 +155,7 @@ public:
       : m_buffer{memory_buffer,
                  reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
 
-  template <typename PollCallback> poll_event_type poll(PollCallback poll_cb) {
+  poll_event_type poll(auto poll_cb) {
     const auto header_before = m_buffer.access_header();
     const auto capacity = header_before.m_capacity;
     if (header_before.m_version == m_version) {
