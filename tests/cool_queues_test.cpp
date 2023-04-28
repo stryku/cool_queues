@@ -560,4 +560,83 @@ TEST_F(MessagingTest, SyncLost) {
   }
 }
 
+TEST_F(MessagingTest, Interrupted) {
+
+  std::string msg1 = "1111";
+  std::string msg2 = "2222222";
+
+  // Message 1
+  m_producer->write(msg1.size(), [&](std::span<std::byte> buffer) {
+    ASSERT_EQ(buffer.size(), msg1.size());
+    std::memcpy(buffer.data(), msg1.data(), msg1.size());
+  });
+
+  std::uint64_t read_size = 0;
+
+  auto result = m_consumer->poll3([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+
+    // Interrupt with message 2
+    m_producer->write(msg2.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg2.size());
+      std::memcpy(buffer.data(), msg2.data(), msg2.size());
+    });
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::interrupted);
+
+  result = m_consumer->poll3([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, 2 * sizeof(message_header) + msg1.size() + msg2.size());
+
+  auto read_msg = std::string_view{
+      (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+      msg1.size()};
+  EXPECT_EQ(read_msg, msg1);
+
+  read_msg =
+      std::string_view{(const char *)(m_consumer_buffer.data() +
+                                      2 * sizeof(message_header) + msg1.size()),
+                       msg2.size()};
+  EXPECT_EQ(read_msg, msg2);
+
+  /////////////////////
+
+  // // Message 1 and 2
+  // m_producer->write(msg1.size(), [&](std::span<std::byte> buffer) {
+  //   ASSERT_EQ(buffer.size(), msg1.size());
+  //   std::memcpy(buffer.data(), msg1.data(), msg1.size());
+  // });
+  // m_producer->write(msg2.size(), [&](std::span<std::byte> buffer) {
+  //   ASSERT_EQ(buffer.size(), msg2.size());
+  //   std::memcpy(buffer.data(), msg2.data(), msg2.size());
+  // });
+
+  // result = m_consumer->poll3([&](auto new_data) {
+  //   read_size = new_data.size();
+  //   std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  // });
+
+  // ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  // ASSERT_EQ(read_size, 2 * sizeof(message_header) + msg1.size() +
+  // msg2.size());
+
+  // read_msg = std::string_view{
+  //     (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+  //     msg1.size()};
+  // EXPECT_EQ(read_msg, msg1);
+
+  // read_msg =
+  //     std::string_view{(const char *)(m_consumer_buffer.data() +
+  //                                     2 * sizeof(message_header) +
+  //                                     msg1.size()),
+  //                      msg2.size()};
+  // EXPECT_EQ(read_msg, msg2);
+}
+
 } // namespace cool_q::test
