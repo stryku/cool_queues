@@ -452,35 +452,33 @@ TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
   }
 }
 
-// TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
-//   auto header = get_header();
-//   std::string msg(100, 'C');
-//   auto wrapped_message_size_with_header = msg.size() +
-//   sizeof(message_header);
+TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
+  auto header = get_header();
+  std::string msg(100, 'C');
+  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
 
-//   fill_leaving_space(wrapped_message_size_with_header - 1);
+  fill_leaving_space(wrapped_message_size_with_header - 1);
 
-//   for (auto c = 'a'; c < 'z'; ++c) {
-//     msg = std::string(header.m_capacity - sizeof(message_header), c);
+  for (auto c = 'a'; c < 'z'; ++c) {
+    msg = std::string(header.m_capacity - sizeof(message_header), c);
 
-//     write(msg);
+    write(msg);
 
-//     std::uint64_t read_size = 0;
+    std::uint64_t read_size = 0;
 
-//     auto result = m_consumer->poll3([&](auto new_data) {
-//       read_size = new_data.size();
-//       std::memcpy(m_consumer_buffer.data(), new_data.data(),
-//       new_data.size());
-//     });
+    auto result = m_consumer->poll3([&](auto new_data) {
+      read_size = new_data.size();
+      std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    });
 
-//     ASSERT_EQ(result, consumer::poll_event_type::new_data) << c;
-//     ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
-//     std::string_view read_msg{
-//         (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
-//         read_size - sizeof(message_header)};
-//     EXPECT_EQ(read_msg, msg);
-//   }
-// }
+    ASSERT_EQ(result, consumer::poll_event_type::new_data) << c;
+    ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
+    std::string_view read_msg{
+        (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+        read_size - sizeof(message_header)};
+    EXPECT_EQ(read_msg, msg);
+  }
+}
 
 // TEST_F(MessagingTest, Random) {
 //   auto header = get_header();
