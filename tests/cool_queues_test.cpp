@@ -253,41 +253,40 @@ TEST_F(MessagingTest, MessagesRange) {
   }
 }
 
-// TEST_F(MessagingTest, MultipleConsumers) {
+TEST_F(MessagingTest, MultipleConsumers) {
 
-//   int n = 100;
-//   std::vector<test_consumer> consumers;
-//   for (int i = 0; i < n; ++i) {
-//     consumers.emplace_back(m_memory_buffer);
-//   }
+  int n = 100;
+  std::vector<test_consumer> consumers;
+  for (int i = 0; i < n; ++i) {
+    consumers.emplace_back(m_memory_buffer);
+  }
 
-//   for (auto msg : k_messages) {
-//     m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
-//       ASSERT_EQ(buffer.size(), msg.size());
-//       std::memcpy(buffer.data(), msg.data(), msg.size());
-//     });
-//   }
+  for (auto msg : k_messages) {
+    m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
+      ASSERT_EQ(buffer.size(), msg.size());
+      std::memcpy(buffer.data(), msg.data(), msg.size());
+    });
+  }
 
-//   for (int i = 0; i < n; ++i) {
-//     auto &consumer = consumers[i];
+  for (int i = 0; i < n; ++i) {
+    auto &consumer = consumers[i];
 
-//     std::uint64_t read_size = 0;
+    std::uint64_t read_size = 0;
 
-//     auto result = consumer.m_consumer.poll3([&](auto new_data) {
-//       read_size = new_data.size();
-//       std::memcpy(consumer.m_buffer.data(), new_data.data(),
-//       new_data.size());
-//     });
+    auto result = consumer.m_consumer.poll3([&](auto new_data) {
+      read_size = new_data.size();
+      std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
+    });
 
-//     ASSERT_EQ(result, consumer::poll_event_type::new_data);
-//     std::span<std::byte> read_data{consumer.m_buffer.data(), read_size};
-//     int msg_i = 0;
-//     for (auto read_msg : messages_range{read_data}) {
-//       std::string_view read_str{(const char *)read_msg.data(),
-//       read_msg.size()}; EXPECT_EQ(read_str, k_messages[msg_i++]);
-//     }
-//   }
-// }
+    ASSERT_EQ(result, consumer::poll_event_type::new_data);
+    std::span<std::byte> read_data{consumer.m_buffer.data(), read_size};
+    int msg_i = 0;
+    for (auto read_msg : messages_range{read_data}) {
+      std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+      EXPECT_EQ(read_str, k_messages[msg_i++]);
+    }
+  }
+}
 
 // TEST_F(MessagingTest, MultipleConsumersMultithread) {
 
