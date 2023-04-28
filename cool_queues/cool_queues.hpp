@@ -17,8 +17,9 @@ struct buffer_header {
   // Starting from sizeof(header). It only grows. It should be calculated %
   // m_capacity.
   std::uint64_t m_last_message_offset = 0;
-  // Starting from sizeof(header). It only grows. It should be calculated %
-  // m_capacity.
+  // Offset of the end of data known to producer. The end of the last written
+  // message. Starting from sizeof(header). It only grows. It should be
+  // calculated % m_capacity.
   std::uint64_t m_end_offset = 0;
   // Starting from sizeof(header). It only grows. It should be calculated %
   // m_capacity.
@@ -186,21 +187,27 @@ public:
       return poll_event_type::no_new_data;
     }
 
-    // // Check sync lost
-    // {
-    //   if (header_before.m_end_offset - m_read_offset > capacity) {
-    //     // Overrun. Need to go to begin.
-    //     const auto size_till_end = capacity - calc_read_offset(capacity);
-    //     m_read_offset += size_till_end;
-    //     const auto msg_header = read_current_message_header();
-    //     if (msg_header.m_seq != m_seq + 1) {
-    //       // Sync lost
-    //       return poll_event_type::lost_sync;
-    //     }
-    //   }
+    // Check sync lost
+    {
+      if (header_before.m_end_offset - m_read_offset > capacity) {
+        // Overrun. Need to go to begin.
+        if (header_before.m_end_offset % capacity == 0) {
+          m_queue_wrap_offset =
+              (header_before.m_end_offset / capacity - 1) * capacity;
+        } else {
+          m_queue_wrap_offset =
+              (header_before.m_end_offset / capacity) * capacity;
+        }
+        m_read_offset = m_queue_wrap_offset;
+        const auto msg_header = read_current_message_header();
+        if (msg_header.m_seq != m_seq + 1) {
+          // Sync lost
+          return poll_event_type::lost_sync;
+        }
+      }
 
-    //   // All good
-    // }
+      // All good
+    }
 
     auto read_start = m_read_offset;
     auto current_read = m_read_offset;
