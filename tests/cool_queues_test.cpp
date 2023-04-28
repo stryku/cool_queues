@@ -520,51 +520,50 @@ TEST_F(MessagingTest, Random) {
   }
 }
 
-// TEST_F(MessagingTest, SyncLost) {
+TEST_F(MessagingTest, SyncLost) {
 
-//   resetup(100);
+  resetup(100);
 
-//   // Fill up to 40
-//   fill_leaving_space(60);
-//   consume_everything();
+  // Fill up to 40
+  fill_leaving_space(60);
+  consume_everything();
 
-//   // Write 6 messages 20 bytes each (including message header). This should
-//   // overrun consumer and it should be able to read 3 messages from the
-//   // beginning, starting from '3'.
-//   const auto message_size = 20 - sizeof(message_header);
+  // Write 6 messages 20 bytes each (including message header). This should
+  // overrun consumer and it should be able to read 3 messages from the
+  // beginning, starting from '3'.
+  const auto message_size = 20 - sizeof(message_header);
 
-//   for (char c = '0'; c < '6'; ++c) {
-//     auto msg = std::string(message_size, c);
-//     write(std::string(message_size, c));
-//   }
+  for (char c = '0'; c < '6'; ++c) {
+    auto msg = std::string(message_size, c);
+    write(std::string(message_size, c));
+  }
 
-//   std::uint64_t read_size = 0;
+  std::uint64_t read_size = 0;
 
-//   // This should los sync.
-//   auto result = m_consumer->poll3([&](auto new_data) {
-//     read_size = new_data.size();
-//     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
-//   });
+  // This should los sync.
+  auto result = m_consumer->poll3([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
 
-//   ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
+  ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
 
-//   // This should return data. 3 messages from the beginning, starting from
-//   '3' result = m_consumer->poll3([&](auto new_data) {
-//     read_size = new_data.size();
-//     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
-//   });
+  // This should return data. 3 messages from the beginning, starting from '3'
+  result = m_consumer->poll3([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
 
-//   ASSERT_EQ(result, consumer::poll_event_type::new_data);
-//   ASSERT_EQ(read_size, 60);
-//   char expected = '3';
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(read_size, 60);
+  char expected = '3';
 
-//   std::span<std::byte> read_data{m_consumer_buffer.data(), read_size};
-//   for (auto read_msg : messages_range{read_data}) {
-//     std::string_view read_str{(const char *)read_msg.data(),
-//     read_msg.size()}; EXPECT_EQ(read_str, std::string(message_size,
-//     expected));
-//     ++expected;
-//   }
-// }
+  std::span<std::byte> read_data{m_consumer_buffer.data(), read_size};
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    EXPECT_EQ(read_str, std::string(message_size, expected));
+    ++expected;
+  }
+}
 
 } // namespace cool_q::test
