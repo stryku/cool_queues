@@ -598,39 +598,10 @@ TEST_F(MessagingTest, Interrupted) {
                                       2 * sizeof(message_header) + msg1.size()),
                        msg2.size()};
   EXPECT_EQ(read_msg, msg2);
+}
 
-  /////////////////////
-
-  // // Message 1 and 2
-  // m_producer->write(msg1.size(), [&](std::span<std::byte> buffer) {
-  //   ASSERT_EQ(buffer.size(), msg1.size());
-  //   std::memcpy(buffer.data(), msg1.data(), msg1.size());
-  // });
-  // m_producer->write(msg2.size(), [&](std::span<std::byte> buffer) {
-  //   ASSERT_EQ(buffer.size(), msg2.size());
-  //   std::memcpy(buffer.data(), msg2.data(), msg2.size());
-  // });
-
-  // result = m_consumer->poll([&](auto new_data) {
-  //   read_size = new_data.size();
-  //   std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
-  // });
-
-  // ASSERT_EQ(result, consumer::poll_event_type::new_data);
-  // ASSERT_EQ(read_size, 2 * sizeof(message_header) + msg1.size() +
-  // msg2.size());
-
-  // read_msg = std::string_view{
-  //     (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
-  //     msg1.size()};
-  // EXPECT_EQ(read_msg, msg1);
-
-  // read_msg =
-  //     std::string_view{(const char *)(m_consumer_buffer.data() +
-  //                                     2 * sizeof(message_header) +
-  //                                     msg1.size()),
-  //                      msg2.size()};
-  // EXPECT_EQ(read_msg, msg2);
+TEST_F(MessagingTest, InterruptedSyncLost) {
+  // TODO implement
 }
 
 } // namespace cool_q::test
