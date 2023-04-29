@@ -29,7 +29,6 @@ struct buffer_header {
   // message. Starting from sizeof(header). It only grows. It should be
   // calculated % m_capacity.
   std::uint64_t m_end_offset = 0;
-  buffer_version_t m_version = 0;
   std::uint64_t m_capacity = 0; // Without header
 
   auto calc_end_offset() const {
@@ -54,10 +53,9 @@ template <> struct fmt::formatter<cool_q::buffer_header> {
   }
 
   constexpr auto format(const cool_q::buffer_header &header, auto &ctx) {
-    return format_to(ctx.out(),
-                     "size={}, end-offset={}, version={}, capacity={}",
+    return format_to(ctx.out(), "size={}, end-offset={}, capacity={}",
                      header.m_header_size, header.m_end_offset,
-                     header.m_version, header.m_capacity);
+                     header.m_capacity);
   }
 };
 
@@ -99,7 +97,6 @@ public:
       : m_buffer{memory_buffer} {}
 
   void write(message_size_t size, auto &&write_cb) {
-
     auto &header = m_buffer.access_header();
     ++header.m_end_offset;
     const auto true_end_offset = header.m_end_offset / 2;
@@ -129,8 +126,6 @@ public:
 
     if (available_capacity >= sizeof(message_header) + size) {
       // Happy path, message fits in available space
-      ++header.m_version;
-
       std::span<std::byte> write_buffer = data.subspan(
           true_end_offset % header.m_capacity + sizeof(message_header), size);
       write_cb(write_buffer);
@@ -141,12 +136,10 @@ public:
       header.m_end_offset += (sizeof(message_header) + size) * 2;
       --header.m_end_offset;
       std::atomic_thread_fence(std::memory_order_release);
-      ++header.m_version;
       return;
     }
 
     // Need to wrap and start from beginning
-    ++header.m_version;
 
     // Write footer
     const buffer_footer footer{};
@@ -161,7 +154,6 @@ public:
         data.subspan(sizeof(message_header), size);
     assert(write_buffer.data() + size < data.data() + data.size());
     write_cb(write_buffer);
-    std::atomic_thread_fence(std::memory_order_release);
 
     // TODO memcpy
     message_header &msg_header =
@@ -177,8 +169,6 @@ public:
     std::atomic_thread_fence(std::memory_order_release);
 
     --header.m_end_offset;
-
-    ++header.m_version;
   }
 
 private:
