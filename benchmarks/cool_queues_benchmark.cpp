@@ -114,12 +114,28 @@ static void consumer_runtime_capacity(benchmark::State &state) {
 
   std::uint64_t produced_bytes = 0;
 
+  cool_q::consumer<1024 * 1024> fresh_consumer{memory_buffer};
+
+  while (produced_bytes < consumer_buffer.size() * 1.5) {
+    const auto size = dist(gen);
+    producer.write(size, [&](const auto buffer) {
+      std::copy(message_buffer.begin(), message_buffer.begin() + size,
+                buffer.begin());
+    });
+
+    fresh_consumer.poll([](const auto) {});
+
+    produced_bytes += size;
+  }
+
+  produced_bytes = 0;
   while (produced_bytes < consumer_buffer.size() - 1024) {
     const auto size = dist(gen);
     producer.write(size, [&](const auto buffer) {
       std::copy(message_buffer.begin(), message_buffer.begin() + size,
                 buffer.begin());
     });
+
     produced_bytes += size;
   }
 
@@ -127,7 +143,7 @@ static void consumer_runtime_capacity(benchmark::State &state) {
   std::int64_t messages = 0;
 
   for (auto _ : state) {
-    cool_q::consumer<> consumer{memory_buffer};
+    auto consumer = fresh_consumer;
 
     while (true) {
       std::uint64_t read_size = 0;
@@ -175,12 +191,28 @@ static void consumer_ct_capacity(benchmark::State &state) {
 
   std::uint64_t produced_bytes = 0;
 
+  cool_q::consumer<1024 * 1024> fresh_consumer{memory_buffer};
+
+  while (produced_bytes < consumer_buffer.size() * 1.5) {
+    const auto size = dist(gen);
+    producer.write(size, [&](const auto buffer) {
+      std::copy(message_buffer.begin(), message_buffer.begin() + size,
+                buffer.begin());
+    });
+
+    fresh_consumer.poll([](const auto) {});
+
+    produced_bytes += size;
+  }
+
+  produced_bytes = 0;
   while (produced_bytes < consumer_buffer.size() - 1024) {
     const auto size = dist(gen);
     producer.write(size, [&](const auto buffer) {
       std::copy(message_buffer.begin(), message_buffer.begin() + size,
                 buffer.begin());
     });
+
     produced_bytes += size;
   }
 
@@ -188,7 +220,7 @@ static void consumer_ct_capacity(benchmark::State &state) {
   std::int64_t messages = 0;
 
   for (auto _ : state) {
-    cool_q::consumer<1024 * 1024> consumer{memory_buffer};
+    auto consumer = fresh_consumer;
 
     while (true) {
       std::uint64_t read_size = 0;
