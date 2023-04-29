@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <string>
@@ -677,23 +678,34 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
   std::random_device rd;
 
-  const auto q_sizes = {50, 100, 1024, 1337, 1024 * 1024};
+  struct test_case {
+    std::uint64_t m_q_size = 0;
+    std::uint64_t m_max_msg_size = std::numeric_limits<std::uint64_t>::max();
+  };
+
+  const auto cases = {test_case{50}, test_case{100}, test_case{1024},
+                      test_case{1337}, test_case{1024 * 1024, 1024}};
   const auto seeds = {3710639107u, rd()};
 
-  for (auto q_size : q_sizes) {
+  for (auto tc : cases) {
     for (auto seed : seeds) {
 
-      fmt::print("[          ] seed={}, q-size={}\n", seed, q_size);
+      fmt::print("[          ] seed={}, q-size={}, max-msg-size={}\n", seed,
+                 tc.m_q_size, tc.m_max_msg_size);
 
-      resetup(q_size);
+      resetup(tc.m_q_size);
 
       auto header = get_header();
 
       int N = 100000;
 
+      std::uint64_t max_msg_size =
+          tc.m_max_msg_size == test_case{}.m_max_msg_size
+              ? header.m_capacity - sizeof(message_header)
+              : tc.m_max_msg_size;
+
       std::mt19937 gen(seed);
-      std::uniform_int_distribution<> size_distribution(
-          0, header.m_capacity - sizeof(message_header));
+      std::uniform_int_distribution<> size_distribution(0, max_msg_size);
       std::uniform_int_distribution<char> char_distribution('a', 'z');
 
       struct test_stage {
@@ -743,7 +755,7 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
         }
       }
 
-      resetup(q_size);
+      resetup(tc.m_q_size);
 
       std::atomic_int consumer_i = 0;
 
