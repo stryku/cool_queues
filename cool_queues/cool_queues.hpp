@@ -206,14 +206,14 @@ private:
   std::uint32_t m_seq = 0;
 };
 
-class consumer {
-public:
-  enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
-  struct poll_result {
-    poll_event_type m_event = poll_event_type::no_new_data;
-    std::uint64_t m_read = 0;
-  };
+enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
+struct poll_result {
+  poll_event_type m_event = poll_event_type::no_new_data;
+  std::uint64_t m_read = 0;
+};
 
+template <std::uint64_t Capacity = 0> class consumer {
+public:
   explicit consumer(std::span<std::byte> memory_buffer)
       : m_buffer{memory_buffer,
                  reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
@@ -232,7 +232,7 @@ public:
       return poll_event_type::no_new_data;
     }
 
-    const auto capacity = m_buffer.access_header().m_capacity;
+    // const auto capacity = m_buffer.access_header().m_capacity;
 
     COOL_Q_CONSUMER_LOG(
         fmt::format("polling read-offset={}, wrap={}, header={}", m_read_offset,
@@ -240,12 +240,14 @@ public:
 
     // Check sync lost
     {
-      if (true_end_offset - m_read_offset > capacity) {
+      if (true_end_offset - m_read_offset > get_capacity()) {
         // Overrun. Need to go to begin.
-        if (true_end_offset % capacity == 0) {
-          m_queue_wrap_offset = (true_end_offset / capacity - 1) * capacity;
+        if (true_end_offset % get_capacity() == 0) {
+          m_queue_wrap_offset =
+              (true_end_offset / get_capacity() - 1) * get_capacity();
         } else {
-          m_queue_wrap_offset = (true_end_offset / capacity) * capacity;
+          m_queue_wrap_offset =
+              (true_end_offset / get_capacity()) * get_capacity();
         }
         m_read_offset = m_queue_wrap_offset;
         const auto msg_header = read_current_message_header();
@@ -299,7 +301,7 @@ public:
         if (current_read == read_start) {
           // Didn't read nothing.
           // TODO do read
-          m_queue_wrap_offset += capacity;
+          m_queue_wrap_offset += get_capacity();
           m_read_offset = m_queue_wrap_offset;
           read_start = m_read_offset;
           current_read = m_read_offset;
@@ -314,7 +316,7 @@ public:
         if (read_end_offset() != end_offset_before) {
           return poll_event_type::interrupted;
         } else {
-          m_queue_wrap_offset += capacity;
+          m_queue_wrap_offset += get_capacity();
           m_read_offset = m_queue_wrap_offset;
           m_seq = last_seq_seen;
           return poll_event_type::new_data;
@@ -352,6 +354,14 @@ private:
         m_buffer.access_data().data() + (offset - m_queue_wrap_offset);
     std::memcpy(&hdr, read_ptr, sizeof(message_header));
     return hdr;
+  }
+
+  constexpr std::uint64_t get_capacity() const {
+    if constexpr (Capacity == 0) {
+      return m_buffer.access_header().m_capacity;
+    } else {
+      return Capacity;
+    }
   }
 
 private:
