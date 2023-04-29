@@ -101,6 +101,10 @@ public:
   void write(message_size_t size, auto &&write_cb) {
 
     auto &header = m_buffer.access_header();
+    ++header.m_end_offset;
+    const auto true_end_offset = header.m_end_offset / 2;
+    std::atomic_thread_fence(std::memory_order_release);
+
     auto data = m_buffer.access_data();
 
     COOL_Q_PRODUCER_LOG(
@@ -112,8 +116,8 @@ public:
     }
 
     const std::uint64_t available_capacity = [&] {
-      const auto calced_end_offset = header.calc_end_offset();
-      if (header.m_end_offset != 0) {
+      const auto calced_end_offset = true_end_offset % header.m_capacity;
+      if (true_end_offset != 0) {
         if (calced_end_offset == 0) {
           return std::uint64_t{0};
         }
@@ -127,14 +131,15 @@ public:
       // Happy path, message fits in available space
       ++header.m_version;
 
-      std::span<std::byte> write_buffer =
-          data.subspan(header.calc_end_offset() + sizeof(message_header), size);
+      std::span<std::byte> write_buffer = data.subspan(
+          true_end_offset % header.m_capacity + sizeof(message_header), size);
       write_cb(write_buffer);
 
       message_header &msg_header = reinterpret_cast<message_header &>(
-          *(data.data() + header.calc_end_offset()));
+          *(data.data() + true_end_offset % header.m_capacity));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
-      header.m_end_offset += sizeof(message_header) + size;
+      header.m_end_offset += (sizeof(message_header) + size) * 2;
+      --header.m_end_offset;
       std::atomic_thread_fence(std::memory_order_release);
       ++header.m_version;
       return;
@@ -145,10 +150,10 @@ public:
 
     // Write footer
     const buffer_footer footer{};
-    if (header.calc_end_offset() == 0) {
+    if (true_end_offset % header.m_capacity == 0) {
       std::memcpy(data.data() + header.m_capacity, &footer, sizeof(footer));
     } else {
-      std::memcpy(data.data() + header.calc_end_offset(), &footer,
+      std::memcpy(data.data() + true_end_offset % header.m_capacity, &footer,
                   sizeof(footer));
     }
 
@@ -167,8 +172,11 @@ public:
 
     // Basically point on the beginning of the Q.
 
-    header.m_end_offset += offset_till_end + sizeof(message_header) + size;
+    header.m_end_offset +=
+        (offset_till_end + sizeof(message_header) + size) * 2;
     std::atomic_thread_fence(std::memory_order_release);
+
+    --header.m_end_offset;
 
     ++header.m_version;
   }
@@ -197,6 +205,13 @@ public:
 
   poll_event_type poll(auto poll_cb) {
     const auto end_offset_before = read_end_offset();
+    const auto true_end_offset = end_offset_before / 2;
+
+    if (end_offset_before & 1) {
+      // Producer is busy. Don't read now.
+      return poll_event_type::no_new_data;
+    }
+
     // const auto header_before = m_buffer.access_header();
     const auto capacity = m_buffer.access_header().m_capacity;
 
@@ -206,12 +221,12 @@ public:
 
     // Check sync lost
     {
-      if (end_offset_before - m_read_offset > capacity) {
+      if (true_end_offset - m_read_offset > capacity) {
         // Overrun. Need to go to begin.
-        if (end_offset_before % capacity == 0) {
-          m_queue_wrap_offset = (end_offset_before / capacity - 1) * capacity;
+        if (true_end_offset % capacity == 0) {
+          m_queue_wrap_offset = (true_end_offset / capacity - 1) * capacity;
         } else {
-          m_queue_wrap_offset = (end_offset_before / capacity) * capacity;
+          m_queue_wrap_offset = (true_end_offset / capacity) * capacity;
         }
         m_read_offset = m_queue_wrap_offset;
         const auto msg_header = read_current_message_header();
@@ -234,7 +249,7 @@ public:
         return poll_event_type::interrupted;
       }
 
-      if (current_read == end_offset_before) {
+      if (current_read == true_end_offset) {
         // No more data to read.
 
         if (current_read == read_start) {
@@ -258,6 +273,10 @@ public:
       }
 
       const message_size_t msg_size = read_message_size_at(current_read);
+      if (read_end_offset() != end_offset_before) {
+        return poll_event_type::interrupted;
+      }
+
       if (msg_size == k_end_of_messages) {
         // Went all the way to the end of messages. There may be new messages
         // wrapped. They will be read in the next poll calls.
@@ -290,6 +309,9 @@ public:
 
       // Got new message. Acknowledge it and iterate again.
       const auto msg_header = read_message_header_at(current_read);
+      if (read_end_offset() != end_offset_before) {
+        return poll_event_type::interrupted;
+      }
       current_read += msg_header.m_size + sizeof(message_header);
       last_seq_seen = msg_header.m_seq;
     }
