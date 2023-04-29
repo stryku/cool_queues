@@ -697,8 +697,6 @@ TEST_F(MessagingTest, Issue1) {
 
 TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
-  GTEST_SKIP();
-
   std::random_device rd;
 
   struct test_case {

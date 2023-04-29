@@ -205,14 +205,13 @@ public:
 
   poll_event_type poll(auto poll_cb) {
     const auto end_offset_before = read_end_offset();
-    const auto true_end_offset = end_offset_before / 2;
+    const auto true_end_offset = end_offset_before >> 1u;
 
     if (end_offset_before & 1) {
       // Producer is busy. Don't read now.
       return poll_event_type::no_new_data;
     }
 
-    // const auto header_before = m_buffer.access_header();
     const auto capacity = m_buffer.access_header().m_capacity;
 
     COOL_Q_CONSUMER_LOG(
@@ -244,11 +243,6 @@ public:
     auto last_seq_seen = m_seq;
 
     while (true) {
-
-      if (read_end_offset() != end_offset_before) {
-        return poll_event_type::interrupted;
-      }
-
       if (current_read == true_end_offset) {
         // No more data to read.
 
