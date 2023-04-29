@@ -97,8 +97,7 @@ public:
       : m_buffer{memory_buffer} {
 
     if constexpr (Capacity != 0) {
-      if (memory_buffer.size() <
-          Capacity + sizeof(buffer_header) + sizeof(buffer_footer)) {
+      if (memory_buffer.size() < required_buffer()) {
         throw std::runtime_error{
             fmt::format("Memory buffer={} too small for required capacity={} + "
                         "header={} + footer={}",
