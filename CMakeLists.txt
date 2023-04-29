@@ -10,6 +10,12 @@ FetchContent_Declare(
   GIT_TAG v1.13.0)
 FetchContent_MakeAvailable(googletest)
 
+FetchContent_Declare(fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 9.1.0
+)
+FetchContent_MakeAvailable(fmt)
+
 set(CMAKE_CXX_STANDARD 20)
 add_compile_options(-Wall -Wextra -pedantic -Werror -Wno-invalid-offsetof)
 

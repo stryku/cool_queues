@@ -1,9 +1,19 @@
 #pragma once
 
+#include <fmt/format.h>
+
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <span>
 #include <stdexcept>
+
+#ifndef COOL_Q_PRODUCER_LOG
+#define COOL_Q_PRODUCER_LOG(x) ((void)0)
+#endif
+#ifndef COOL_Q_CONSUMER_LOG
+#define COOL_Q_CONSUMER_LOG(x) ((void)0)
+#endif
 
 namespace cool_q {
 
@@ -35,6 +45,22 @@ struct message_header {
   message_size_t m_size = 0;
   std::uint32_t m_seq = 0;
 };
+} // namespace cool_q
+
+template <> struct fmt::formatter<cool_q::buffer_header> {
+  constexpr auto parse(auto &ctx) const {
+    return ctx.begin();
+  }
+
+  constexpr auto format(const cool_q::buffer_header &header, auto &ctx) {
+    return format_to(ctx.out(),
+                     "size={}, end-offset={}, version={}, capacity={}",
+                     header.m_header_size, header.m_end_offset,
+                     header.m_version, header.m_capacity);
+  }
+};
+
+namespace cool_q {
 
 class buffer {
 public:
@@ -72,8 +98,12 @@ public:
       : m_buffer{memory_buffer} {}
 
   void write(message_size_t size, auto &&write_cb) {
+
     auto &header = m_buffer.access_header();
     auto data = m_buffer.access_data();
+
+    COOL_Q_PRODUCER_LOG(
+        fmt::format("Writing msg-size={}, header=({})", size, header));
 
     if (sizeof(message_header) + size > header.m_capacity) {
       // TODO: throw proper type
@@ -104,6 +134,7 @@ public:
           *(data.data() + header.calc_end_offset()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += sizeof(message_header) + size;
+      std::atomic_thread_fence(std::memory_order_release);
       ++header.m_version;
       return;
     }
@@ -134,6 +165,7 @@ public:
     // Basically point on the beginning of the Q.
 
     header.m_end_offset += offset_till_end + sizeof(message_header) + size;
+    std::atomic_thread_fence(std::memory_order_release);
 
     ++header.m_version;
   }
@@ -155,20 +187,28 @@ public:
       : m_buffer{memory_buffer,
                  reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
 
+  auto read_end_offset() {
+    std::atomic_thread_fence(std::memory_order_acquire);
+    return m_buffer.access_header().m_end_offset;
+  }
+
   poll_event_type poll(auto poll_cb) {
-    const auto header_before = m_buffer.access_header();
-    const auto capacity = header_before.m_capacity;
+    const auto end_offset_before = read_end_offset();
+    // const auto header_before = m_buffer.access_header();
+    const auto capacity = m_buffer.access_header().m_capacity;
+
+    COOL_Q_CONSUMER_LOG(
+        fmt::format("polling read-offset={}, wrap={}, header={}", m_read_offset,
+                    m_queue_wrap_offset, m_buffer.access_header()));
 
     // Check sync lost
     {
-      if (header_before.m_end_offset - m_read_offset > capacity) {
+      if (end_offset_before - m_read_offset > capacity) {
         // Overrun. Need to go to begin.
-        if (header_before.m_end_offset % capacity == 0) {
-          m_queue_wrap_offset =
-              (header_before.m_end_offset / capacity - 1) * capacity;
+        if (end_offset_before % capacity == 0) {
+          m_queue_wrap_offset = (end_offset_before / capacity - 1) * capacity;
         } else {
-          m_queue_wrap_offset =
-              (header_before.m_end_offset / capacity) * capacity;
+          m_queue_wrap_offset = (end_offset_before / capacity) * capacity;
         }
         m_read_offset = m_queue_wrap_offset;
         const auto msg_header = read_current_message_header();
@@ -186,11 +226,12 @@ public:
     auto last_seq_seen = m_seq;
 
     while (true) {
-      if (m_buffer.access_header().m_end_offset != header_before.m_end_offset) {
+
+      if (read_end_offset() != end_offset_before) {
         return poll_event_type::interrupted;
       }
 
-      if (current_read == header_before.m_end_offset) {
+      if (current_read == end_offset_before) {
         // No more data to read.
 
         if (current_read == read_start) {
@@ -204,8 +245,7 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (m_buffer.access_header().m_end_offset !=
-            header_before.m_end_offset) {
+        if (read_end_offset() != end_offset_before) {
           return poll_event_type::interrupted;
         } else {
           m_seq = last_seq_seen;
@@ -235,8 +275,7 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (m_buffer.access_header().m_end_offset !=
-            header_before.m_end_offset) {
+        if (read_end_offset() != end_offset_before) {
           return poll_event_type::interrupted;
         } else {
           m_queue_wrap_offset += capacity;

@@ -1,8 +1,13 @@
+#define COOL_Q_PRODUCER_LOG(x) fmt::print("[producer] {}\n", (x))
+#define COOL_Q_CONSUMER_LOG(x) fmt::print("[consumer] {}\n", (x))
+
 #include "cool_queues/cool_queues.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <random>
 #include <string>
 #include <string_view>
@@ -602,6 +607,218 @@ TEST_F(MessagingTest, Interrupted) {
 
 TEST_F(MessagingTest, InterruptedSyncLost) {
   // TODO implement
+}
+
+TEST_F(MessagingTest, Issue1) {
+
+  /*
+clang-format off
+[producer] Writing msg-size=14, header=(size=32, end-offset=0, version=0, capacity=50)
+[consumer] polling read-offset=0, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
+[producer] Writing msg-size=4, header=(size=32, end-offset=22, version=2, capacity=50)
+[producer] Writing msg-size=20, header=(size=32, end-offset=34, version=4, capacity=50)
+[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=78, version=6, capacity=50
+[consumer] polling read-offset=50, wrap=50, header=size=32, end-offset=78, version=6, capacity=50
+/home/stryku/my/programming/cool_queues/cool_queues/tests/cool_queues_test.cpp:700: Failure
+Expected equality of these values:
+  read_str
+    Which is: "mmmmmmmmmmmmmmmmmmmm"
+  messages[num_messages]
+    Which is: "vvvv"
+1
+clang-format on
+*/
+
+  resetup(50);
+
+  std::string msg1 = std::string(14, '1');
+  std::string msg2 = std::string(4, '2');
+  std::string msg3 = std::string(20, '3');
+
+  write(msg1);
+
+  std::string_view read_str;
+  std::size_t read_size = 0;
+
+  auto result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+
+  std::span read_data(m_consumer_buffer.data(), read_size);
+
+  std::vector<std::string_view> gotMessages;
+
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    gotMessages.push_back(read_str);
+  }
+
+  EXPECT_EQ(gotMessages[0], msg1);
+
+  write(msg2);
+  write(msg3);
+
+  result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    read_str = std::string_view{(const char *)m_consumer_buffer.data(),
+                                new_data.size()};
+  });
+
+  ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
+
+  result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    read_str = std::string_view{(const char *)m_consumer_buffer.data(),
+                                new_data.size()};
+  });
+
+  read_data = std::span{m_consumer_buffer.data(), read_size};
+
+  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+
+  gotMessages.clear();
+
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    gotMessages.push_back(read_str);
+  }
+
+  ASSERT_EQ(gotMessages.size(), 1);
+  EXPECT_EQ(gotMessages[0], msg3);
+}
+
+TEST_F(MessagingTest, DISABLE_ConcurrentReadWrite) {
+
+  GTEST_SKIP();
+
+  resetup(50);
+
+  auto header = get_header();
+
+  std::random_device rd;
+  const auto seed = 3710639107ul;
+  // const auto seed = rd();
+  std::mt19937 gen(seed);
+  std::uniform_int_distribution<> size_distribution(
+      0, header.m_capacity - sizeof(message_header));
+  std::uniform_int_distribution<char> char_distribution('a', 'z');
+
+  std::cout << "[          ] " << seed << '\n';
+
+  std::string msg(100, 'C');
+  // auto wrapped_message_size_with_header = msg.size() +
+  // sizeof(message_header);
+
+  // fill_leaving_space(wrapped_message_size_with_header - 1);
+
+  std::atomic_uint64_t consumer_size = 0;
+
+  int N = 100;
+  std::vector<std::string> messages;
+  messages.resize(N);
+
+  std::mutex mtx;
+
+  std::thread producer_thread{[&] {
+    std::uint64_t producer_size = 0;
+    std::uint64_t next_msg_size = size_distribution(gen);
+
+    int num_messages = 0;
+
+    while (num_messages < N) {
+
+      std::lock_guard lg(mtx);
+
+      if (producer_size + sizeof(message_header) + next_msg_size -
+              consumer_size.load() >
+          header.m_capacity) {
+        // Slow reader. Wait.
+        continue;
+      }
+
+      char c = char_distribution(gen);
+      msg = std::string(next_msg_size, c);
+      messages[num_messages] = msg;
+      write(msg);
+      producer_size += sizeof(message_header) + next_msg_size;
+
+      next_msg_size = size_distribution(gen);
+
+      ++num_messages;
+    }
+  }};
+
+  std::thread consumer_thread{[&] {
+    int num_messages = 0;
+    int not_new_data = 0;
+
+    std::vector<std::string> gotMessages;
+
+    while (num_messages < N) {
+
+      std::lock_guard lg(mtx);
+
+      std::size_t read_size = 0;
+
+      auto result = m_consumer->poll([&](auto new_data) {
+        read_size = new_data.size();
+        std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+      });
+
+      ASSERT_NE(result, consumer::poll_event_type::lost_sync);
+
+      if (result != consumer::poll_event_type::new_data) {
+        ++not_new_data;
+        continue;
+      }
+
+      consumer_size.store(consumer_size.load() + read_size);
+
+      std::span read_data(m_consumer_buffer.data(), read_size);
+
+      for (auto read_msg : messages_range{read_data}) {
+        std::string_view read_str{(const char *)read_msg.data(),
+                                  read_msg.size()};
+        EXPECT_EQ(read_str, messages[num_messages]) << num_messages;
+
+        gotMessages.push_back(std::string(read_str));
+
+        if (read_str != messages[num_messages]) {
+          [[maybe_unused]] int a;
+          a = 22;
+          if (not_new_data) {
+            a = 223;
+          }
+        }
+
+        ++num_messages;
+      }
+    }
+
+    fmt::print("not new {}", not_new_data);
+  }};
+
+  producer_thread.join();
+  consumer_thread.join();
 }
 
 } // namespace cool_q::test
