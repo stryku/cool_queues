@@ -207,10 +207,6 @@ private:
 };
 
 enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
-struct poll_result {
-  poll_event_type m_event = poll_event_type::no_new_data;
-  std::uint64_t m_read = 0;
-};
 
 template <std::uint64_t Capacity = 0> class consumer {
 public:
@@ -231,8 +227,6 @@ public:
       // Producer is busy. Don't read now.
       return poll_event_type::no_new_data;
     }
-
-    // const auto capacity = m_buffer.access_header().m_capacity;
 
     COOL_Q_CONSUMER_LOG(
         fmt::format("polling read-offset={}, wrap={}, header={}", m_read_offset,
