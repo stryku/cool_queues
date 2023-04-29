@@ -1,5 +1,5 @@
-#define COOL_Q_PRODUCER_LOG(x) fmt::print("[producer] {}\n", (x))
-#define COOL_Q_CONSUMER_LOG(x) fmt::print("[consumer] {}\n", (x))
+// #define COOL_Q_PRODUCER_LOG(x) fmt::print("[producer] {}\n", (x))
+// #define COOL_Q_CONSUMER_LOG(x) fmt::print("[consumer] {}\n", (x))
 
 #include "cool_queues/cool_queues.hpp"
 
@@ -610,39 +610,6 @@ TEST_F(MessagingTest, InterruptedSyncLost) {
 }
 
 TEST_F(MessagingTest, Issue1) {
-
-  /*
-clang-format off
-[producer] Writing msg-size=14, header=(size=32, end-offset=0, version=0, capacity=50)
-[consumer] polling read-offset=0, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=22, version=2, capacity=50
-[producer] Writing msg-size=4, header=(size=32, end-offset=22, version=2, capacity=50)
-[producer] Writing msg-size=20, header=(size=32, end-offset=34, version=4, capacity=50)
-[consumer] polling read-offset=22, wrap=0, header=size=32, end-offset=78, version=6, capacity=50
-[consumer] polling read-offset=50, wrap=50, header=size=32, end-offset=78, version=6, capacity=50
-/home/stryku/my/programming/cool_queues/cool_queues/tests/cool_queues_test.cpp:700: Failure
-Expected equality of these values:
-  read_str
-    Which is: "mmmmmmmmmmmmmmmmmmmm"
-  messages[num_messages]
-    Which is: "vvvv"
-1
-clang-format on
-*/
-
   resetup(50);
 
   std::string msg1 = std::string(14, '1');
@@ -711,7 +678,7 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
 
   auto header = get_header();
 
-  int N = 100;
+  int N = 10000;
 
   std::random_device rd;
   const auto seed = 3710639107ul;
@@ -769,21 +736,7 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
 
   header = get_header();
 
-  // std::random_device rd;
-  // const auto seed = 3710639107ul;
-  // // const auto seed = rd();
-  // std::mt19937 gen(seed);
-  // std::uniform_int_distribution<> size_distribution(
-  //     0, header.m_capacity - sizeof(message_header));
-  // std::uniform_int_distribution<char> char_distribution('a', 'z');
-
   std::cout << "[          ] " << seed << '\n';
-
-  std::string msg(100, 'C');
-  // auto wrapped_message_size_with_header = msg.size() +
-  // sizeof(message_header);
-
-  // fill_leaving_space(wrapped_message_size_with_header - 1);
 
   std::atomic_int consumer_i = 0;
 
@@ -794,9 +747,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
   std::mutex mtx;
 
   std::thread producer_thread{[&] {
-    // std::uint64_t producer_size = 0;
-    // std::uint64_t next_msg_size = size_distribution(gen);
-
     int stage_i = 0;
 
     while (stage_i < N) {
@@ -807,7 +757,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
 
       std::lock_guard lg(mtx);
 
-      ///////////////////
       auto &stage = test_stages[stage_i];
       if (consumer_i.load() < stage.m_min_consumer_stage_i) {
         continue;
@@ -816,41 +765,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
       messages[stage_i] = stage.m_msg;
       write(stage.m_msg);
       ++stage_i;
-
-      /////////////////
-
-      // std::size_t producer_will_write_at = header.m_end_offset;
-
-      // std::size_t available_space = 0;
-
-      // if (header.m_end_offset % header.m_capacity != 0) {
-      //   available_space =
-      //       header.m_capacity - header.m_end_offset % header.m_capacity;
-      // }
-
-      // if (available_space < sizeof(message_header) + next_msg_size) {
-      //   if (header.m_end_offset % header.m_capacity != 0) {
-      //     producer_will_write_at =
-      //         (header.m_end_offset / header.m_capacity + 1) *
-      //         header.m_capacity;
-      //   }
-      // }
-
-      // if (producer_will_write_at + sizeof(message_header) + next_msg_size >=
-      //     consumer_size.load()) {
-      //   // Slow reader. Wait.
-      //   continue;
-      // }
-
-      // char c = char_distribution(gen);
-      // msg = std::string(next_msg_size, c);
-      // messages[num_messages] = msg;
-      // write(msg);
-      // producer_size += sizeof(message_header) + next_msg_size;
-
-      // next_msg_size = size_distribution(gen);
-
-      // ++num_messages;
     }
   }};
 
