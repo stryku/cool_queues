@@ -674,15 +674,15 @@ TEST_F(MessagingTest, Issue1) {
 }
 
 TEST_F(MessagingTest, ConcurrentReadWrite) {
-  resetup(50);
+  resetup(500);
 
   auto header = get_header();
 
-  int N = 10000;
+  int N = 100000;
 
   std::random_device rd;
-  const auto seed = 3710639107ul;
-  // const auto seed = rd();
+  // const auto seed = 3710639107ul;
+  const auto seed = rd();
   std::mt19937 gen(seed);
   std::uniform_int_distribution<> size_distribution(
       0, header.m_capacity - sizeof(message_header));
@@ -705,34 +705,39 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
     char c = char_distribution(gen);
     stage.m_msg = std::string(next_msg_size, c);
 
+    stage.m_producer_end_before_this_stage = get_header().m_end_offset;
     write(stage.m_msg);
     stage.m_producer_end_after_this_stage = get_header().m_end_offset;
+
+    test_stages.push_back(stage);
 
     std::uint64_t current_stage_end = get_header().m_end_offset;
 
     bool found = false;
 
-    for (int j = 0; j < (int)test_stages.size(); ++j) {
+    for (int j = test_stages.size() - 1; j >= 0; --j) {
       auto diff =
           current_stage_end - test_stages[j].m_producer_end_before_this_stage;
 
       if (diff <= header.m_capacity) {
-        stage.m_min_consumer_stage_i = j;
+        test_stages.back().m_min_consumer_stage_i = j;
+      } else {
+        if (test_stages.back().m_min_consumer_stage_i == 0) {
+          test_stages.back().m_min_consumer_stage_i = j;
+        }
         found = true;
         break;
       }
     }
 
     if (!found) {
-      stage.m_min_consumer_stage_i = i;
+      test_stages.back().m_min_consumer_stage_i = 0;
     }
-
-    test_stages.push_back(stage);
   }
 
   // GTEST_SKIP();
 
-  resetup(50);
+  resetup(500);
 
   header = get_header();
 
@@ -744,8 +749,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
   std::vector<std::string> messages;
   messages.resize(N);
 
-  std::mutex mtx;
-
   std::thread producer_thread{[&] {
     int stage_i = 0;
 
@@ -754,8 +757,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
       if (!consumer_running) {
         return;
       }
-
-      std::lock_guard lg(mtx);
 
       auto &stage = test_stages[stage_i];
       if (consumer_i.load() < stage.m_min_consumer_stage_i) {
@@ -769,13 +770,7 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
   }};
 
   std::thread consumer_thread{[&] {
-    int not_new_data = 0;
-
-    std::vector<std::string> gotMessages;
-
     while (consumer_i.load() < N) {
-
-      std::lock_guard lg(mtx);
 
       std::size_t read_size = 0;
 
@@ -784,10 +779,10 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
         std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
       });
 
-      ASSERT_NE(result, consumer::poll_event_type::lost_sync);
+      ASSERT_NE(result, consumer::poll_event_type::lost_sync)
+          << fmt::format("consumer_i={}", consumer_i.load());
 
       if (result != consumer::poll_event_type::new_data) {
-        ++not_new_data;
         continue;
       }
 
@@ -797,17 +792,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
         std::string_view read_str{(const char *)read_msg.data(),
                                   read_msg.size()};
         EXPECT_EQ(read_str, messages[consumer_i.load()]) << consumer_i.load();
-
-        gotMessages.push_back(std::string(read_str));
-
-        if (read_str != messages[consumer_i.load()]) {
-          [[maybe_unused]] int a;
-          a = 22;
-          if (not_new_data) {
-            a = 223;
-          }
-        }
-
         consumer_i.store(consumer_i.load() + 1);
       }
     }
