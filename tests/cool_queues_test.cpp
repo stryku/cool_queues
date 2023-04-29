@@ -38,10 +38,7 @@ struct test_consumer {
 class MessagingTest : public ::testing::Test {
 public:
   void SetUp() override {
-    m_memory_buffer = {};
-    m_consumer_buffer = {};
-    m_producer = std::make_unique<producer>(m_memory_buffer);
-    m_consumer = std::make_unique<consumer>(m_memory_buffer);
+    resetup(1024);
   }
 
   void TearDown() override {
@@ -50,12 +47,12 @@ public:
   }
 
   void resetup(std::uint64_t capacity) {
-    assert(capacity + sizeof(buffer_header) + sizeof(buffer_footer) <=
-           m_memory_buffer.size());
 
-    std::span<std::byte> buffer{m_memory_buffer.data(),
-                                capacity + sizeof(buffer_header) +
-                                    sizeof(buffer_footer)};
+    m_memory_buffer.resize(capacity + sizeof(buffer_header) +
+                           sizeof(buffer_footer));
+    m_consumer_buffer.resize(capacity);
+
+    std::span<std::byte> buffer = m_memory_buffer;
     m_producer = std::make_unique<producer>(buffer);
     m_consumer = std::make_unique<consumer>(buffer);
   }
@@ -79,12 +76,15 @@ public:
   void write(std::string_view msg) {
     m_producer->write(msg.size(), [&](std::span<std::byte> buffer) {
       ASSERT_EQ(buffer.size(), msg.size());
+      ASSERT_GE(buffer.data(), m_memory_buffer.data());
+      ASSERT_LT(buffer.data() + buffer.size(),
+                m_memory_buffer.data() + m_memory_buffer.size());
       std::memcpy(buffer.data(), msg.data(), msg.size());
     });
   }
 
-  std::array<std::byte, 1024> m_memory_buffer;
-  std::array<std::byte, 1024> m_consumer_buffer;
+  std::vector<std::byte> m_memory_buffer;
+  std::vector<std::byte> m_consumer_buffer;
   std::unique_ptr<producer> m_producer;
   std::unique_ptr<consumer> m_consumer;
 };
@@ -673,134 +673,140 @@ TEST_F(MessagingTest, Issue1) {
   EXPECT_EQ(gotMessages[0], msg3);
 }
 
-TEST_F(MessagingTest, ConcurrentReadWrite) {
-  resetup(500);
-
-  auto header = get_header();
-
-  int N = 100000;
+TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
   std::random_device rd;
-  // const auto seed = 3710639107ul;
-  const auto seed = rd();
-  std::mt19937 gen(seed);
-  std::uniform_int_distribution<> size_distribution(
-      0, header.m_capacity - sizeof(message_header));
-  std::uniform_int_distribution<char> char_distribution('a', 'z');
 
-  struct test_stage {
-    std::string m_msg;
-    std::uint64_t m_producer_end_before_this_stage = 0;
-    std::uint64_t m_producer_end_after_this_stage = 0;
-    int m_min_consumer_stage_i = 0;
-  };
+  const auto q_sizes = {50, 100, 1024, 1337, 1024 * 1024};
+  const auto seeds = {3710639107u, rd()};
 
-  std::vector<test_stage> test_stages;
+  for (auto q_size : q_sizes) {
+    for (auto seed : seeds) {
 
-  for (int i = 0; i < N; ++i) {
+      fmt::print("[          ] seed={}, q-size={}\n", seed, q_size);
 
-    test_stage stage;
+      resetup(q_size);
 
-    std::uint64_t next_msg_size = size_distribution(gen);
-    char c = char_distribution(gen);
-    stage.m_msg = std::string(next_msg_size, c);
+      auto header = get_header();
 
-    stage.m_producer_end_before_this_stage = get_header().m_end_offset;
-    write(stage.m_msg);
-    stage.m_producer_end_after_this_stage = get_header().m_end_offset;
+      int N = 100000;
 
-    test_stages.push_back(stage);
+      std::mt19937 gen(seed);
+      std::uniform_int_distribution<> size_distribution(
+          0, header.m_capacity - sizeof(message_header));
+      std::uniform_int_distribution<char> char_distribution('a', 'z');
 
-    std::uint64_t current_stage_end = get_header().m_end_offset;
+      struct test_stage {
+        std::string m_msg;
+        std::uint64_t m_producer_end_before_this_stage = 0;
+        std::uint64_t m_producer_end_after_this_stage = 0;
+        int m_min_consumer_stage_i = 0;
+      };
 
-    bool found = false;
+      std::vector<test_stage> test_stages;
 
-    for (int j = test_stages.size() - 1; j >= 0; --j) {
-      auto diff =
-          current_stage_end - test_stages[j].m_producer_end_before_this_stage;
+      for (int i = 0; i < N; ++i) {
 
-      if (diff <= header.m_capacity) {
-        test_stages.back().m_min_consumer_stage_i = j;
-      } else {
-        if (test_stages.back().m_min_consumer_stage_i == 0) {
-          test_stages.back().m_min_consumer_stage_i = j;
+        test_stage stage;
+
+        std::uint64_t next_msg_size = size_distribution(gen);
+        char c = char_distribution(gen);
+        stage.m_msg = std::string(next_msg_size, c);
+
+        stage.m_producer_end_before_this_stage = get_header().m_end_offset;
+        write(stage.m_msg);
+        stage.m_producer_end_after_this_stage = get_header().m_end_offset;
+
+        test_stages.push_back(stage);
+
+        std::uint64_t current_stage_end = get_header().m_end_offset;
+
+        bool found = false;
+
+        for (int j = test_stages.size() - 1; j >= 0; --j) {
+          auto diff = current_stage_end -
+                      test_stages[j].m_producer_end_before_this_stage;
+
+          if (diff <= header.m_capacity) {
+            test_stages.back().m_min_consumer_stage_i = j;
+          } else {
+            if (test_stages.back().m_min_consumer_stage_i == 0) {
+              test_stages.back().m_min_consumer_stage_i = j;
+            }
+            found = true;
+            break;
+          }
         }
-        found = true;
-        break;
-      }
-    }
 
-    if (!found) {
-      test_stages.back().m_min_consumer_stage_i = 0;
+        if (!found) {
+          test_stages.back().m_min_consumer_stage_i = 0;
+        }
+      }
+
+      resetup(q_size);
+
+      std::atomic_int consumer_i = 0;
+
+      bool consumer_running = true;
+      std::vector<std::string> messages;
+      messages.resize(N);
+
+      std::thread producer_thread{[&] {
+        int stage_i = 0;
+
+        while (stage_i < N) {
+
+          if (!consumer_running) {
+            return;
+          }
+
+          auto &stage = test_stages[stage_i];
+          if (consumer_i.load() < stage.m_min_consumer_stage_i) {
+            continue;
+          }
+
+          messages[stage_i] = stage.m_msg;
+          write(stage.m_msg);
+          ++stage_i;
+        }
+      }};
+
+      std::thread consumer_thread{[&] {
+        while (consumer_i.load() < N) {
+
+          std::size_t read_size = 0;
+
+          auto result = m_consumer->poll([&](auto new_data) {
+            read_size = new_data.size();
+            std::memcpy(m_consumer_buffer.data(), new_data.data(),
+                        new_data.size());
+          });
+
+          ASSERT_NE(result, consumer::poll_event_type::lost_sync)
+              << fmt::format("consumer_i={}", consumer_i.load());
+
+          if (result != consumer::poll_event_type::new_data) {
+            continue;
+          }
+
+          std::span read_data(m_consumer_buffer.data(), read_size);
+
+          for (auto read_msg : messages_range{read_data}) {
+            std::string_view read_str{(const char *)read_msg.data(),
+                                      read_msg.size()};
+            EXPECT_EQ(read_str, messages[consumer_i.load()])
+                << consumer_i.load();
+            consumer_i.store(consumer_i.load() + 1);
+          }
+        }
+
+        consumer_running = false;
+      }};
+
+      producer_thread.join();
+      consumer_thread.join();
     }
   }
-
-  // GTEST_SKIP();
-
-  resetup(500);
-
-  header = get_header();
-
-  std::cout << "[          ] " << seed << '\n';
-
-  std::atomic_int consumer_i = 0;
-
-  bool consumer_running = true;
-  std::vector<std::string> messages;
-  messages.resize(N);
-
-  std::thread producer_thread{[&] {
-    int stage_i = 0;
-
-    while (stage_i < N) {
-
-      if (!consumer_running) {
-        return;
-      }
-
-      auto &stage = test_stages[stage_i];
-      if (consumer_i.load() < stage.m_min_consumer_stage_i) {
-        continue;
-      }
-
-      messages[stage_i] = stage.m_msg;
-      write(stage.m_msg);
-      ++stage_i;
-    }
-  }};
-
-  std::thread consumer_thread{[&] {
-    while (consumer_i.load() < N) {
-
-      std::size_t read_size = 0;
-
-      auto result = m_consumer->poll([&](auto new_data) {
-        read_size = new_data.size();
-        std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
-      });
-
-      ASSERT_NE(result, consumer::poll_event_type::lost_sync)
-          << fmt::format("consumer_i={}", consumer_i.load());
-
-      if (result != consumer::poll_event_type::new_data) {
-        continue;
-      }
-
-      std::span read_data(m_consumer_buffer.data(), read_size);
-
-      for (auto read_msg : messages_range{read_data}) {
-        std::string_view read_str{(const char *)read_msg.data(),
-                                  read_msg.size()};
-        EXPECT_EQ(read_str, messages[consumer_i.load()]) << consumer_i.load();
-        consumer_i.store(consumer_i.load() + 1);
-      }
-    }
-
-    consumer_running = false;
-  }};
-
-  producer_thread.join();
-  consumer_thread.join();
 }
 
 } // namespace cool_q::test

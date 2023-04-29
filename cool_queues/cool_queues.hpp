@@ -3,6 +3,7 @@
 #include <fmt/format.h>
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -153,7 +154,9 @@ public:
 
     std::span<std::byte> write_buffer =
         data.subspan(sizeof(message_header), size);
+    assert(write_buffer.data() + size < data.data() + data.size());
     write_cb(write_buffer);
+    std::atomic_thread_fence(std::memory_order_release);
 
     // TODO memcpy
     message_header &msg_header =
