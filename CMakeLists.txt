@@ -16,6 +16,14 @@ FetchContent_Declare(fmt
 )
 FetchContent_MakeAvailable(fmt)
 
+set(BENCHMARK_ENABLE_TESTING OFF)
+
+FetchContent_Declare(
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG v1.7.1)
+FetchContent_MakeAvailable(googlebenchmark)
+
 set(CMAKE_CXX_STANDARD 20)
 add_compile_options(-Wall -Wextra -pedantic -Werror -Wno-invalid-offsetof)
 

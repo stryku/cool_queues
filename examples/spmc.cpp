@@ -77,8 +77,7 @@ int main() {
       cool_q::consumer consumer{memory_buffer};
       std::uint64_t bytes_received = 0;
       unsigned polls = 0;
-      std::array<unsigned, (int)cool_q::consumer::poll_event_type::new_data>
-          results{};
+      std::array<unsigned, (int)cool_q::poll_event_type::new_data> results{};
 
       for (int received_messages = 0;
            received_messages < messages_to_receive;) {
@@ -94,7 +93,7 @@ int main() {
 
         ++results[(int)result];
 
-        if (result != cool_q::consumer::poll_event_type::new_data) {
+        if (result != cool_q::poll_event_type::new_data) {
           continue;
         }
 
@@ -114,11 +113,10 @@ int main() {
       log(fmt::format(
           "[consumer {}] polls={}, no-new-data={}, new-data={}, lost-sync={}, "
           "interrupted={}",
-          i, polls,
-          results[(int)cool_q::consumer::poll_event_type::no_new_data],
-          results[(int)cool_q::consumer::poll_event_type::new_data],
-          results[(int)cool_q::consumer::poll_event_type::lost_sync],
-          results[(int)cool_q::consumer::poll_event_type::interrupted]));
+          i, polls, results[(int)cool_q::poll_event_type::no_new_data],
+          results[(int)cool_q::poll_event_type::new_data],
+          results[(int)cool_q::poll_event_type::lost_sync],
+          results[(int)cool_q::poll_event_type::interrupted]));
 
       consumers_finished.store(consumers_finished.load() + 1);
 

@@ -32,7 +32,7 @@ namespace {
 
 struct test_consumer {
   test_consumer(std::span<std::byte> queue_buffer) : m_consumer{queue_buffer} {}
-  consumer m_consumer;
+  consumer<> m_consumer;
   std::array<std::byte, 1024> m_buffer;
 };
 
@@ -55,7 +55,7 @@ public:
 
     std::span<std::byte> buffer = m_memory_buffer;
     m_producer = std::make_unique<producer<>>(buffer);
-    m_consumer = std::make_unique<consumer>(buffer);
+    m_consumer = std::make_unique<consumer<>>(buffer);
   }
 
   auto get_header() {
@@ -108,7 +108,7 @@ public:
   std::vector<std::byte> m_memory_buffer;
   std::vector<std::byte> m_consumer_buffer;
   std::unique_ptr<producer<>> m_producer;
-  std::unique_ptr<consumer> m_consumer;
+  std::unique_ptr<consumer<>> m_consumer;
 };
 
 TEST(BufferTest, Constructor) {
@@ -182,7 +182,7 @@ TEST_F(MessagingTest, BasicTest) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, msg1.size() + sizeof(message_header));
   std::string_view read_msg{
       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -200,7 +200,7 @@ TEST_F(MessagingTest, BasicTest) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, msg2.size() + sizeof(message_header));
   read_msg = std::string_view{
       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -222,7 +222,7 @@ TEST_F(MessagingTest, BasicTest) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, 2 * sizeof(message_header) + msg1.size() + msg2.size());
 
   read_msg = std::string_view{
@@ -253,7 +253,7 @@ TEST_F(MessagingTest, MessagesRange) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   std::span<std::byte> read_data{m_consumer_buffer.data(), read_size};
   int i = 0;
   for (auto read_msg : messages_range{read_data}) {
@@ -287,7 +287,7 @@ TEST_F(MessagingTest, MultipleConsumers) {
       std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
     });
 
-    ASSERT_EQ(result, consumer::poll_event_type::new_data);
+    ASSERT_EQ(result, poll_event_type::new_data);
     std::span<std::byte> read_data{consumer.m_buffer.data(), read_size};
     int msg_i = 0;
     for (auto read_msg : messages_range{read_data}) {
@@ -319,7 +319,7 @@ TEST_F(MessagingTest, MultipleConsumersMultithread) {
         std::memcpy(consumer.m_buffer.data(), new_data.data(), new_data.size());
       });
 
-      ASSERT_EQ(result, consumer::poll_event_type::new_data);
+      ASSERT_EQ(result, poll_event_type::new_data);
       std::span<std::byte> read_data{consumer.m_buffer.data(), read_size};
       int msg_i = 0;
       for (auto read_msg : messages_range{read_data}) {
@@ -350,7 +350,7 @@ TEST_F(MessagingTest, MessagePerfectlyFills) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
   std::string_view read_msg{
       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -373,7 +373,7 @@ TEST_F(MessagingTest, MessageOneByteTooBig) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
   std::string_view read_msg{
       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -399,7 +399,7 @@ TEST_F(MessagingTest, MessageOfExactlyQueueCapacity) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
   std::string_view read_msg{
       (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -432,7 +432,7 @@ TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, 60);
   char expected = '0';
 
@@ -449,7 +449,7 @@ TEST_F(MessagingTest, MultipleMessagesFillQueueExactly) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, 40);
   expected = '3';
 
@@ -480,7 +480,7 @@ TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
       std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
     });
 
-    ASSERT_EQ(result, consumer::poll_event_type::new_data) << c;
+    ASSERT_EQ(result, poll_event_type::new_data) << c;
     ASSERT_EQ(read_size, msg.size() + sizeof(message_header));
     std::string_view read_msg{
         (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -520,7 +520,7 @@ TEST_F(MessagingTest, Random) {
       std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
     });
 
-    ASSERT_EQ(result, consumer::poll_event_type::new_data) << i;
+    ASSERT_EQ(result, poll_event_type::new_data) << i;
     ASSERT_EQ(read_size, msg.size() + sizeof(message_header)) << i;
     std::string_view read_msg{
         (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
@@ -555,7 +555,7 @@ TEST_F(MessagingTest, SyncLost) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
+  ASSERT_EQ(result, poll_event_type::lost_sync);
 
   // This should return data. 3 messages from the beginning, starting from '3'
   result = m_consumer->poll([&](auto new_data) {
@@ -563,7 +563,7 @@ TEST_F(MessagingTest, SyncLost) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, 60);
   char expected = '3';
 
@@ -599,14 +599,14 @@ TEST_F(MessagingTest, Interrupted) {
     });
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::interrupted);
+  ASSERT_EQ(result, poll_event_type::interrupted);
 
   result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
   ASSERT_EQ(read_size, 2 * sizeof(message_header) + msg1.size() + msg2.size());
 
   auto read_msg = std::string_view{
@@ -642,7 +642,7 @@ TEST_F(MessagingTest, Issue1) {
     std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
 
   std::span read_data(m_consumer_buffer.data(), read_size);
 
@@ -665,7 +665,7 @@ TEST_F(MessagingTest, Issue1) {
                                 new_data.size()};
   });
 
-  ASSERT_EQ(result, consumer::poll_event_type::lost_sync);
+  ASSERT_EQ(result, poll_event_type::lost_sync);
 
   result = m_consumer->poll([&](auto new_data) {
     read_size = new_data.size();
@@ -676,7 +676,7 @@ TEST_F(MessagingTest, Issue1) {
 
   read_data = std::span{m_consumer_buffer.data(), read_size};
 
-  ASSERT_EQ(result, consumer::poll_event_type::new_data);
+  ASSERT_EQ(result, poll_event_type::new_data);
 
   gotMessages.clear();
 
@@ -809,10 +809,10 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
                         new_data.size());
           });
 
-          ASSERT_NE(result, consumer::poll_event_type::lost_sync)
+          ASSERT_NE(result, poll_event_type::lost_sync)
               << fmt::format("consumer_i={}", consumer_i.load());
 
-          if (result != consumer::poll_event_type::new_data) {
+          if (result != poll_event_type::new_data) {
             continue;
           }
 
@@ -903,7 +903,7 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
                         new_data.size());
           });
 
-          if (result != consumer::poll_event_type::new_data) {
+          if (result != poll_event_type::new_data) {
             continue;
           }
 
