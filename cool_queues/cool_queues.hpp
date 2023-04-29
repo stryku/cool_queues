@@ -91,10 +91,33 @@ private:
   std::span<std::byte> m_buffer;
 };
 
-class producer {
+template <std::uint64_t Capacity = 0> class producer {
 public:
   explicit producer(std::span<std::byte> memory_buffer)
-      : m_buffer{memory_buffer} {}
+      : m_buffer{memory_buffer} {
+
+    if constexpr (Capacity != 0) {
+      if (memory_buffer.size() <
+          Capacity + sizeof(buffer_header) + sizeof(buffer_footer)) {
+        throw std::runtime_error{
+            fmt::format("Memory buffer={} too small for required capacity={} + "
+                        "header={} + footer={}",
+                        memory_buffer.size(), Capacity, sizeof(buffer_header),
+                        sizeof(buffer_footer))};
+      }
+
+      m_buffer.access_header().m_capacity = Capacity;
+    }
+  }
+
+  static constexpr std::uint64_t required_buffer() {
+    if constexpr (Capacity == 0) {
+      // Doesn't make much sense to use this method in this case...
+      return 0;
+    } else {
+      return Capacity + sizeof(buffer_header) + sizeof(buffer_footer);
+    }
+  }
 
   void write(message_size_t size, auto &&write_cb) {
     auto &header = m_buffer.access_header();
@@ -107,31 +130,31 @@ public:
     COOL_Q_PRODUCER_LOG(
         fmt::format("Writing msg-size={}, header=({})", size, header));
 
-    if (sizeof(message_header) + size > header.m_capacity) {
+    if (sizeof(message_header) + size > get_capacity()) {
       // TODO: throw proper type
       throw std::runtime_error{"Q too small"};
     }
 
     const std::uint64_t available_capacity = [&] {
-      const auto calced_end_offset = true_end_offset % header.m_capacity;
+      const auto calced_end_offset = true_end_offset % get_capacity();
       if (true_end_offset != 0) {
         if (calced_end_offset == 0) {
           return std::uint64_t{0};
         }
-        return header.m_capacity - calced_end_offset;
+        return get_capacity() - calced_end_offset;
       }
 
-      return header.m_capacity;
+      return get_capacity();
     }();
 
     if (available_capacity >= sizeof(message_header) + size) {
       // Happy path, message fits in available space
       std::span<std::byte> write_buffer = data.subspan(
-          true_end_offset % header.m_capacity + sizeof(message_header), size);
+          true_end_offset % get_capacity() + sizeof(message_header), size);
       write_cb(write_buffer);
 
       message_header &msg_header = reinterpret_cast<message_header &>(
-          *(data.data() + true_end_offset % header.m_capacity));
+          *(data.data() + true_end_offset % get_capacity()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += (sizeof(message_header) + size) * 2;
       --header.m_end_offset;
@@ -143,10 +166,10 @@ public:
 
     // Write footer
     const buffer_footer footer{};
-    if (true_end_offset % header.m_capacity == 0) {
-      std::memcpy(data.data() + header.m_capacity, &footer, sizeof(footer));
+    if (true_end_offset % get_capacity() == 0) {
+      std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
     } else {
-      std::memcpy(data.data() + true_end_offset % header.m_capacity, &footer,
+      std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
                   sizeof(footer));
     }
 
@@ -172,6 +195,14 @@ public:
   }
 
 private:
+  constexpr std::uint64_t get_capacity() const {
+    if constexpr (Capacity == 0) {
+      return m_buffer.access_header().m_capacity;
+    } else {
+      return Capacity;
+    }
+  }
+
   buffer m_buffer;
   std::uint32_t m_seq = 0;
 };

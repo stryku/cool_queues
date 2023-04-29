@@ -54,7 +54,7 @@ public:
     m_consumer_buffer.resize(capacity);
 
     std::span<std::byte> buffer = m_memory_buffer;
-    m_producer = std::make_unique<producer>(buffer);
+    m_producer = std::make_unique<producer<>>(buffer);
     m_consumer = std::make_unique<consumer>(buffer);
   }
 
@@ -107,7 +107,7 @@ public:
 
   std::vector<std::byte> m_memory_buffer;
   std::vector<std::byte> m_consumer_buffer;
-  std::unique_ptr<producer> m_producer;
+  std::unique_ptr<producer<>> m_producer;
   std::unique_ptr<consumer> m_consumer;
 };
 
@@ -120,17 +120,14 @@ TEST(BufferTest, Constructor) {
   auto &header = buf.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 0);
-  EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 
   header.m_end_offset = 40;
-  header.m_version = 41;
 
   buffer buf2(memory_buffer, header);
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 40);
-  EXPECT_EQ(header.m_version, 41);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 }
@@ -145,7 +142,6 @@ TEST(ProducerTest, Constructor) {
   auto &header = buffer.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 0);
-  EXPECT_EQ(header.m_version, 0);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 }
@@ -159,13 +155,11 @@ TEST(ConsumerTest, Constructor) {
   buffer buffer(memory_buffer, buffer_header{});
   auto &header = buffer.access_header();
   header.m_end_offset = 40;
-  header.m_version = 41;
 
   consumer consumer(memory_buffer);
   // Ensure it doesn't override header
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 40);
-  EXPECT_EQ(header.m_version, 41);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
                                    sizeof(buffer_footer));
 }

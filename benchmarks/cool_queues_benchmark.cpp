@@ -9,8 +9,6 @@ static void std_copy(benchmark::State &state) {
   std::array<std::byte, 4096> memory_buffer;
   std::array<std::byte, 512> message_buffer{};
 
-  cool_q::producer producer{memory_buffer};
-
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_int_distribution<> dist(0, 512);
@@ -30,10 +28,10 @@ static void std_copy(benchmark::State &state) {
 BENCHMARK(std_copy);
 
 static void producer(benchmark::State &state) {
-  std::array<std::byte, 4096> memory_buffer;
+  std::array<std::byte, 4500> memory_buffer;
   std::array<std::byte, 512> message_buffer{};
 
-  cool_q::producer producer{memory_buffer};
+  cool_q::producer<4096> producer{memory_buffer};
 
   std::random_device rd;
   std::mt19937 gen(rd());
