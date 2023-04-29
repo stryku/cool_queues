@@ -342,8 +342,9 @@ private:
 
 private:
   buffer m_buffer;
-  // It only grows. It should be calculated % buffer_header.m_capacity.
+  // It only grows. It should be calculated - m_queue_wrap_offset.
   std::uint64_t m_read_offset = 0;
+  // It only grows.
   std::uint64_t m_queue_wrap_offset = 0;
   std::uint32_t m_seq = 0;
 };

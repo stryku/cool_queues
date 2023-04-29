@@ -27,4 +27,5 @@ if(COOL_Q_SANITIZE)
 endif()
 
 add_subdirectory(cool_queues)
+add_subdirectory(examples)
 add_subdirectory(tests)
