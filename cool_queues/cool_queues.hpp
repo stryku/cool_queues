@@ -29,6 +29,10 @@ struct buffer_header {
   // message. Starting from sizeof(header). It only grows. It should be
   // calculated % m_capacity.
   std::uint64_t m_end_offset = 0;
+  // Where footer is located.
+  // If 0, then it should be ignored and read msg by msg.
+  // If not zero, footer is valid and can read up to footer, at once.
+  std::uint64_t m_footer_at_offset = 0;
   std::uint64_t m_capacity = 0; // Without header
 
   auto calc_end_offset() const {
@@ -39,6 +43,7 @@ struct buffer_header {
 // Space reserved at the end of memory_buffer for orchestration
 struct buffer_footer {
   message_size_t m_end_of_messages = k_end_of_messages;
+  std::uint32_t m_last_msg_seq = 0;
 };
 
 struct message_header {
@@ -82,6 +87,10 @@ public:
     return reinterpret_cast<buffer_header &>(*m_buffer.data());
   }
 
+  buffer_footer &access_footer() const {
+    return reinterpret_cast<buffer_footer &>(*m_buffer.data());
+  }
+
   // Returns buffer including space for footer.
   std::span<std::byte> access_data() const {
     return m_buffer.subspan(sizeof(buffer_header));
@@ -121,7 +130,7 @@ public:
   void write(message_size_t size, auto &&write_cb) {
     auto &header = m_buffer.access_header();
     ++header.m_end_offset;
-    const auto true_end_offset = header.m_end_offset / 2;
+    const auto true_end_offset = header.m_end_offset >> 1;
     std::atomic_thread_fence(std::memory_order_release);
 
     auto data = m_buffer.access_data();
@@ -157,6 +166,13 @@ public:
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += (sizeof(message_header) + size) * 2;
       --header.m_end_offset;
+
+      if ((header.m_end_offset >> 1) >
+          header.m_footer_at_offset + get_capacity()) {
+        // Footer got overrun, disable it.
+        header.m_footer_at_offset = 0;
+      }
+
       std::atomic_thread_fence(std::memory_order_release);
       return;
     }
@@ -164,12 +180,14 @@ public:
     // Need to wrap and start from beginning
 
     // Write footer
-    const buffer_footer footer{};
+    const buffer_footer footer{.m_last_msg_seq = m_seq};
     if (true_end_offset % get_capacity() == 0) {
       std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
+      header.m_footer_at_offset = true_end_offset;
     } else {
       std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
                   sizeof(footer));
+      header.m_footer_at_offset = true_end_offset;
     }
 
     std::span<std::byte> write_buffer =
@@ -188,6 +206,13 @@ public:
 
     header.m_end_offset +=
         (offset_till_end + sizeof(message_header) + size) * 2;
+
+    if ((header.m_end_offset >> 1) >
+        header.m_footer_at_offset + get_capacity()) {
+      // Footer got overrun, disable it.
+      header.m_footer_at_offset = 0;
+    }
+
     std::atomic_thread_fence(std::memory_order_release);
 
     --header.m_end_offset;
@@ -257,6 +282,39 @@ public:
     auto read_start = m_read_offset;
     auto current_read = m_read_offset;
     auto last_seq_seen = m_seq;
+
+    //////////////
+
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const auto footer_at_offset = m_buffer.access_header().m_footer_at_offset;
+    if (read_end_offset() != end_offset_before) {
+      return poll_event_type::interrupted;
+    }
+
+    if (footer_at_offset != 0 &&
+        m_read_offset > true_end_offset - get_capacity() &&
+        m_read_offset < footer_at_offset) {
+      // Can read [read_start, footer)
+      const auto data = m_buffer.access_data();
+      const auto read_size = footer_at_offset - m_read_offset;
+      std::span<std::byte> new_data{
+          data.data() + (m_read_offset - m_queue_wrap_offset), read_size};
+
+      poll_cb(new_data);
+
+      if (read_end_offset() != end_offset_before) {
+        return poll_event_type::interrupted;
+      } else {
+        // We read up until footer, meaning we need to wrap. Let's do it right
+        // away.
+        m_queue_wrap_offset += get_capacity();
+        m_read_offset = m_queue_wrap_offset;
+        m_seq = m_buffer.access_footer().m_last_msg_seq;
+        return poll_event_type::new_data;
+      }
+    }
+
+    ///////////////////
 
     while (true) {
       if (current_read == true_end_offset) {

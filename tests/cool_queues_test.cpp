@@ -489,43 +489,127 @@ TEST_F(MessagingTest, MultipleMessagesOfExactlyQueueCapacity) {
   }
 }
 
+TEST_F(MessagingTest, Issue2) {
+  resetup(100);
+
+  std::string msg1 = std::string(60 - 8, '1');
+  std::string msg2 = std::string(20 - 8, '2');
+  std::string msg3 = std::string(30 - 8, '3');
+
+  // Msg 1
+  write(msg1);
+
+  std::string_view read_str;
+  std::size_t read_size = 0;
+
+  auto result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+  });
+
+  ASSERT_EQ(result, poll_event_type::new_data);
+
+  std::span read_data(m_consumer_buffer.data(), read_size);
+
+  std::vector<std::string_view> gotMessages;
+
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    gotMessages.push_back(read_str);
+  }
+
+  EXPECT_EQ(gotMessages[0], msg1);
+
+  // Msg 2
+  write(msg2);
+  write(msg3);
+
+  result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    read_str = std::string_view{(const char *)m_consumer_buffer.data(),
+                                new_data.size()};
+  });
+
+  ASSERT_EQ(result, poll_event_type::new_data);
+
+  read_data = std::span(m_consumer_buffer.data(), read_size);
+
+  gotMessages.clear();
+
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    gotMessages.push_back(read_str);
+  }
+
+  EXPECT_EQ(gotMessages[0], msg2);
+
+  // Msg 3
+  result = m_consumer->poll([&](auto new_data) {
+    read_size = new_data.size();
+    std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+    read_str = std::string_view{(const char *)m_consumer_buffer.data(),
+                                new_data.size()};
+  });
+
+  ASSERT_EQ(result, poll_event_type::new_data);
+
+  read_data = std::span(m_consumer_buffer.data(), read_size);
+
+  gotMessages.clear();
+
+  for (auto read_msg : messages_range{read_data}) {
+    std::string_view read_str{(const char *)read_msg.data(), read_msg.size()};
+    gotMessages.push_back(read_str);
+  }
+
+  EXPECT_EQ(gotMessages[0], msg3);
+}
+
 TEST_F(MessagingTest, Random) {
   auto header = get_header();
 
   std::random_device rd;
-  const auto seed = rd();
-  std::mt19937 gen(seed);
-  std::uniform_int_distribution<> distrib(0, header.m_capacity -
-                                                 sizeof(message_header));
-  std::uniform_int_distribution<char> char_distribution('a', 'z');
 
-  std::cout << "[          ] " << seed << '\n';
+  const auto seeds = {3265852520u, rd()};
 
-  std::string msg(100, 'C');
-  auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
+  for (auto seed : seeds) {
 
-  fill_leaving_space(wrapped_message_size_with_header - 1);
+    resetup(header.m_capacity);
 
-  for (int i = 0; i < 10000; ++i) {
-    char c = char_distribution(gen);
-    const auto size = distrib(gen);
-    msg = std::string(size, c);
+    std::mt19937 gen(seed);
+    std::uniform_int_distribution<> distrib(0, header.m_capacity -
+                                                   sizeof(message_header));
+    std::uniform_int_distribution<char> char_distribution('a', 'z');
 
-    write(msg);
+    std::cout << "[          ] " << seed << '\n';
 
-    std::uint64_t read_size = 0;
+    std::string msg(100, 'C');
+    auto wrapped_message_size_with_header = msg.size() + sizeof(message_header);
 
-    auto result = m_consumer->poll([&](auto new_data) {
-      read_size = new_data.size();
-      std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
-    });
+    fill_leaving_space(wrapped_message_size_with_header - 1);
 
-    ASSERT_EQ(result, poll_event_type::new_data) << i;
-    ASSERT_EQ(read_size, msg.size() + sizeof(message_header)) << i;
-    std::string_view read_msg{
-        (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
-        read_size - sizeof(message_header)};
-    EXPECT_EQ(read_msg, msg) << i;
+    for (int i = 0; i < 10000; ++i) {
+      char c = char_distribution(gen);
+      const auto size = distrib(gen);
+      msg = std::string(size, c);
+
+      write(msg);
+
+      std::uint64_t read_size = 0;
+
+      auto result = m_consumer->poll([&](auto new_data) {
+        read_size = new_data.size();
+        std::memcpy(m_consumer_buffer.data(), new_data.data(), new_data.size());
+      });
+
+      ASSERT_EQ(result, poll_event_type::new_data) << i;
+      ASSERT_EQ(read_size, msg.size() + sizeof(message_header)) << i;
+      std::string_view read_msg{
+          (const char *)(m_consumer_buffer.data() + sizeof(message_header)),
+          read_size - sizeof(message_header)};
+      EXPECT_EQ(read_msg, msg) << i;
+    }
   }
 }
 
@@ -691,6 +775,8 @@ TEST_F(MessagingTest, Issue1) {
 
 TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
+  // GTEST_SKIP();
+
   std::random_device rd;
 
   struct test_case {
@@ -838,90 +924,99 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
 TEST_F(MessagingTest, ConcurrentReadWrite) {
 
-  std::random_device rd;
+  int num = 0;
 
-  struct test_case {
-    std::uint64_t m_q_size = 0;
-    std::uint64_t m_max_msg_size = std::numeric_limits<std::uint64_t>::max();
-  };
+  while (num == 0) {
+    ++num;
 
-  const auto cases = {test_case{50}, test_case{100}, test_case{1024},
-                      test_case{1337}, test_case{1024 * 1024, 1024}};
-  const auto seeds = {3710639107u, rd()};
+    std::random_device rd;
 
-  for (auto tc : cases) {
-    for (auto seed : seeds) {
+    struct test_case {
+      std::uint64_t m_q_size = 0;
+      std::uint64_t m_max_msg_size = std::numeric_limits<std::uint64_t>::max();
+    };
 
-      fmt::print("[          ] seed={}, q-size={}, max-msg-size={}\n", seed,
-                 tc.m_q_size, tc.m_max_msg_size);
+    const auto cases = {test_case{50}, test_case{100}, test_case{1024},
+                        test_case{1337}, test_case{1024 * 1024, 1024}};
+    const auto seeds = {3710639107u, rd()};
 
-      resetup(tc.m_q_size);
+    // const auto cases = {test_case{1024}};
+    // const auto seeds = {3710639107u};
 
-      auto header = get_header();
+    for (auto tc : cases) {
+      for (auto seed : seeds) {
 
-      int N = 100000;
+        fmt::print("[          ] num={}, seed={}, q-size={}, max-msg-size={}\n",
+                   num, seed, tc.m_q_size, tc.m_max_msg_size);
 
-      std::uint64_t max_msg_size =
-          tc.m_max_msg_size == test_case{}.m_max_msg_size
-              ? header.m_capacity - sizeof(message_header)
-              : tc.m_max_msg_size;
-      max_msg_size -= sizeof(std::uint64_t); // Checksum
+        resetup(tc.m_q_size);
 
-      std::mt19937 gen(seed);
-      std::uniform_int_distribution<> size_distribution(0, max_msg_size);
-      std::uniform_int_distribution<char> char_distribution('a', 'z');
+        auto header = get_header();
 
-      bool producer_running = true;
-      bool consumer_running = true;
-      std::vector<std::string> messages;
-      messages.resize(N);
+        int N = 100000;
 
-      std::thread producer_thread{[&] {
-        for (int i = 0; i < N; ++i) {
-          if (!consumer_running) {
-            return;
+        std::uint64_t max_msg_size =
+            tc.m_max_msg_size == test_case{}.m_max_msg_size
+                ? header.m_capacity - sizeof(message_header)
+                : tc.m_max_msg_size;
+        max_msg_size -= sizeof(std::uint64_t); // Checksum
+
+        std::mt19937 gen(seed);
+        std::uniform_int_distribution<> size_distribution(0, max_msg_size);
+        std::uniform_int_distribution<char> char_distribution('a', 'z');
+
+        bool producer_running = true;
+        bool consumer_running = true;
+        std::vector<std::string> messages;
+        messages.resize(N);
+
+        std::thread producer_thread{[&] {
+          for (int i = 0; i < N; ++i) {
+            if (!consumer_running) {
+              return;
+            }
+
+            std::uint64_t next_msg_size = size_distribution(gen);
+            char c = char_distribution(gen);
+            auto msg = make_signed_message(std::string(next_msg_size, c));
+
+            write(msg);
           }
 
-          std::uint64_t next_msg_size = size_distribution(gen);
-          char c = char_distribution(gen);
-          auto msg = make_signed_message(std::string(next_msg_size, c));
+          producer_running = false;
+        }};
 
-          write(msg);
-        }
+        std::thread consumer_thread{[&] {
+          while (producer_running) {
 
-        producer_running = false;
-      }};
+            std::size_t read_size = 0;
 
-      std::thread consumer_thread{[&] {
-        while (producer_running) {
+            auto result = m_consumer->poll([&](auto new_data) {
+              read_size = new_data.size();
+              std::memcpy(m_consumer_buffer.data(), new_data.data(),
+                          new_data.size());
+            });
 
-          std::size_t read_size = 0;
+            if (result != poll_event_type::new_data) {
+              continue;
+            }
 
-          auto result = m_consumer->poll([&](auto new_data) {
-            read_size = new_data.size();
-            std::memcpy(m_consumer_buffer.data(), new_data.data(),
-                        new_data.size());
-          });
+            std::span read_data(m_consumer_buffer.data(), read_size);
 
-          if (result != poll_event_type::new_data) {
-            continue;
+            for (auto read_msg : messages_range{read_data}) {
+              std::string_view read_str{(const char *)read_msg.data(),
+                                        read_msg.size()};
+
+              EXPECT_TRUE(validate_signed_message(read_str)) << read_str;
+            }
           }
 
-          std::span read_data(m_consumer_buffer.data(), read_size);
+          consumer_running = false;
+        }};
 
-          for (auto read_msg : messages_range{read_data}) {
-            std::string_view read_str{(const char *)read_msg.data(),
-                                      read_msg.size()};
-
-            EXPECT_TRUE(validate_signed_message(read_str)) << read_str;
-          }
-        }
-
-        consumer_running = false;
-      }};
-
-      producer_thread.join();
-      consumer_thread.join();
+        producer_thread.join();
+        consumer_thread.join();
+      }
     }
   }
 }
