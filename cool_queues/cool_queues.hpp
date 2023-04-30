@@ -56,6 +56,51 @@ struct message_header {
 
 enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
 
+class messages_range {
+public:
+  explicit messages_range(std::span<std::byte> buffer) : m_buffer{buffer} {}
+
+  struct iterator {
+    explicit iterator(std::byte *data) : m_data{data} {}
+
+    std::span<std::byte> operator*() const {
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      return std::span{m_data + sizeof(message_header), msg_header.m_size};
+    }
+
+    iterator &operator++() {
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      m_data += msg_header.m_size + sizeof(message_header);
+      return *this;
+    }
+
+    iterator operator++(int) {
+      auto copy = *this;
+      message_header msg_header;
+      std::memcpy(&msg_header, m_data, sizeof(message_header));
+      m_data += msg_header.m_size + sizeof(message_header);
+      return copy;
+    }
+
+    constexpr bool operator==(const iterator &) const = default;
+
+    std::byte *m_data = nullptr;
+  };
+
+  iterator begin() const {
+    return iterator{m_buffer.data()};
+  }
+
+  iterator end() const {
+    return iterator{m_buffer.data() + m_buffer.size()};
+  }
+
+private:
+  std::span<std::byte> m_buffer;
+};
+
 } // namespace cool_q
 
 template <> struct fmt::formatter<cool_q::buffer_header> {
@@ -124,15 +169,6 @@ public:
     }
   }
 
-  static constexpr std::uint64_t required_buffer() {
-    if constexpr (Capacity == 0) {
-      // Doesn't make much sense to use this method in this case...
-      return 0;
-    } else {
-      return Capacity + sizeof(buffer_header) + sizeof(buffer_footer);
-    }
-  }
-
   void write(message_size_t size, auto &&write_cb) {
     auto &header = m_buffer.access_header();
     ++header.m_end_offset;
@@ -145,21 +181,10 @@ public:
         fmt::format("Writing msg-size={}, header=({})", size, header));
 
     if (sizeof(message_header) + size > get_capacity()) {
-      // TODO: throw proper type
       throw std::runtime_error{"Q too small"};
     }
 
-    const std::uint64_t available_capacity = [&] {
-      const auto calced_end_offset = true_end_offset % get_capacity();
-      if (true_end_offset != 0) {
-        if (calced_end_offset == 0) {
-          return std::uint64_t{0};
-        }
-        return get_capacity() - calced_end_offset;
-      }
-
-      return get_capacity();
-    }();
+    const std::uint64_t available_capacity = calc_available_capacity();
 
     if (available_capacity >= sizeof(message_header) + size) {
       // Happy path, message fits in available space
@@ -171,48 +196,37 @@ public:
           *(data.data() + true_end_offset % get_capacity()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += (sizeof(message_header) + size) << 1;
-      header.m_last_seq = m_seq;
 
-      if ((header.m_end_offset >> 1) >
-          header.m_footer_at_offset + get_capacity()) {
-        // Footer got overrun, disable it.
-        header.m_footer_at_offset = 0;
-      }
-      --header.m_end_offset;
-      std::atomic_thread_fence(std::memory_order_release);
-
-      return;
-    }
-
-    // Need to wrap and start from beginning
-
-    // Write footer
-    const buffer_footer footer{.m_last_msg_seq = m_seq};
-    if (true_end_offset % get_capacity() == 0) {
-      std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
-      header.m_footer_at_offset = true_end_offset;
     } else {
-      std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
-                  sizeof(footer));
-      header.m_footer_at_offset = true_end_offset;
+
+      // Need to wrap and start from beginning
+
+      // Write footer
+      const buffer_footer footer{.m_last_msg_seq = m_seq};
+      if (true_end_offset % get_capacity() == 0) {
+        std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
+        header.m_footer_at_offset = true_end_offset;
+      } else {
+        std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
+                    sizeof(footer));
+        header.m_footer_at_offset = true_end_offset;
+      }
+
+      // Let user write content.
+      std::span<std::byte> write_buffer =
+          data.subspan(sizeof(message_header), size);
+      assert(write_buffer.data() + size < data.data() + data.size());
+      write_cb(write_buffer);
+
+      // Write header.
+      const message_header msg_header = {.m_size = size, .m_seq = ++m_seq};
+      std::memcpy(data.data(), &msg_header, sizeof(message_header));
+
+      // Point on the beginning of the Q.
+      const std::uint64_t offset_till_end = available_capacity;
+      header.m_end_offset +=
+          (offset_till_end + sizeof(message_header) + size) * 2;
     }
-
-    std::span<std::byte> write_buffer =
-        data.subspan(sizeof(message_header), size);
-    assert(write_buffer.data() + size < data.data() + data.size());
-    write_cb(write_buffer);
-
-    // TODO memcpy
-    message_header &msg_header =
-        reinterpret_cast<message_header &>(*data.data());
-    msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
-
-    const std::uint64_t offset_till_end = available_capacity;
-
-    // Basically point on the beginning of the Q.
-
-    header.m_end_offset +=
-        (offset_till_end + sizeof(message_header) + size) * 2;
 
     if ((header.m_end_offset >> 1) >
         header.m_footer_at_offset + get_capacity()) {
@@ -226,7 +240,31 @@ public:
     std::atomic_thread_fence(std::memory_order_release);
   }
 
+  static constexpr std::uint64_t required_buffer() {
+    if constexpr (Capacity == 0) {
+      // Doesn't make much sense to use this method in this case...
+      return 0;
+    } else {
+      return Capacity + sizeof(buffer_header) + sizeof(buffer_footer);
+    }
+  }
+
 private:
+  std::uint64_t calc_available_capacity() const {
+    const auto true_end_offset = m_buffer.access_header().m_end_offset >> 1;
+
+    const auto calced_end_offset = true_end_offset % get_capacity();
+
+    if (true_end_offset != 0) {
+      if (calced_end_offset == 0) {
+        return std::uint64_t{0};
+      }
+      return get_capacity() - calced_end_offset;
+    }
+
+    return get_capacity();
+  }
+
   constexpr std::uint64_t get_capacity() const {
     if constexpr (Capacity == 0) {
       return m_buffer.access_header().m_capacity;
@@ -282,6 +320,7 @@ private:
 
     if (true_end_offset - m_read_offset > get_capacity()) {
       // Overrun. Need to go to begin.
+
       if (true_end_offset % get_capacity() == 0) {
         m_queue_wrap_offset =
             (true_end_offset / get_capacity() - 1) * get_capacity();
@@ -289,8 +328,10 @@ private:
         m_queue_wrap_offset =
             (true_end_offset / get_capacity()) * get_capacity();
       }
+
       m_read_offset = m_queue_wrap_offset;
-      const auto msg_header = read_current_message_header();
+
+      const auto msg_header = read_message_header_at(m_read_offset);
       if (msg_header.m_seq != m_seq + 1) {
         return poll_event_type::lost_sync;
       }
@@ -301,6 +342,7 @@ private:
 
   std::optional<poll_event_type>
   try_read_till_footer(std::uint64_t end_offset_before, const auto &poll_cb) {
+
     const auto footer_at_offset = access_header().m_footer_at_offset;
     if (access_header().m_end_offset != end_offset_before) {
       return poll_event_type::interrupted;
@@ -397,28 +439,29 @@ private:
         // No more data to read.
 
         if (current_read == read_start) {
-          // TODO can ever happen?
+          // Read nothing.
           return poll_event_type::no_new_data;
         }
 
-        // Did read some
+        // Did read some.
         const auto data = m_buffer.access_data();
         std::span<std::byte> new_data{data.data() +
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
         if (access_header().m_end_offset != end_offset_before) {
-
           return poll_event_type::interrupted;
         } else {
           m_seq = last_seq_seen;
           m_read_offset = current_read;
-
           return poll_event_type::new_data;
         }
       }
 
-      const message_size_t msg_size = read_message_size_at(current_read);
+      // There's still something to read.
+
+      const auto msg_size = read_message_size_at(current_read);
+
       if (access_header().m_end_offset != end_offset_before) {
         return poll_event_type::interrupted;
       }
@@ -427,16 +470,16 @@ private:
         // Went all the way to the end of messages. There may be new messages
         // wrapped. They will be read in the next poll calls.
 
-        // TODO Need to wrap
         if (current_read == read_start) {
-          // Didn't read nothing.
-          // TODO do read
+          // Haven't read nothing yet. Wrap and try reading again.
           m_queue_wrap_offset += get_capacity();
           m_read_offset = m_queue_wrap_offset;
           read_start = m_read_offset;
           current_read = m_read_offset;
           continue;
         }
+
+        // We read till end of messages. Notify user.
 
         const auto data = m_buffer.access_data();
         std::span<std::byte> new_data{data.data() +
@@ -455,6 +498,7 @@ private:
       }
 
       // Got new message. Acknowledge it and iterate again.
+
       const auto msg_header = read_message_header_at(current_read);
       if (access_header().m_end_offset != end_offset_before) {
         return poll_event_type::interrupted;
@@ -470,13 +514,8 @@ private:
     return m_buffer.access_header();
   }
 
-  message_header read_current_message_header() {
-    return read_message_header_at(m_read_offset);
-  }
-
-  message_size_t read_message_size_at(std::uint64_t offset) {
+  message_size_t read_message_size_at(std::uint64_t offset) const {
     message_size_t size;
-
     const auto read_ptr =
         m_buffer.access_data().data() + (offset - m_queue_wrap_offset);
     std::memcpy(&size, read_ptr, sizeof(message_size_t));
@@ -485,7 +524,6 @@ private:
 
   message_header read_message_header_at(std::uint64_t offset) {
     message_header hdr;
-
     const std::byte *read_ptr =
         m_buffer.access_data().data() + (offset - m_queue_wrap_offset);
     std::memcpy(&hdr, read_ptr, sizeof(message_header));
@@ -507,51 +545,6 @@ private:
   // It only grows.
   std::uint64_t m_queue_wrap_offset = 0;
   std::uint32_t m_seq = 0;
-};
-
-class messages_range {
-public:
-  explicit messages_range(std::span<std::byte> buffer) : m_buffer{buffer} {}
-
-  struct iterator {
-    explicit iterator(std::byte *data) : m_data{data} {}
-
-    std::span<std::byte> operator*() const {
-      message_header msg_header;
-      std::memcpy(&msg_header, m_data, sizeof(message_header));
-      return std::span{m_data + sizeof(message_header), msg_header.m_size};
-    }
-
-    iterator &operator++() {
-      message_header msg_header;
-      std::memcpy(&msg_header, m_data, sizeof(message_header));
-      m_data += msg_header.m_size + sizeof(message_header);
-      return *this;
-    }
-
-    iterator operator++(int) {
-      auto copy = *this;
-      message_header msg_header;
-      std::memcpy(&msg_header, m_data, sizeof(message_header));
-      m_data += msg_header.m_size + sizeof(message_header);
-      return copy;
-    }
-
-    constexpr bool operator==(const iterator &) const = default;
-
-    std::byte *m_data = nullptr;
-  };
-
-  iterator begin() const {
-    return iterator{m_buffer.data()};
-  }
-
-  iterator end() const {
-    return iterator{m_buffer.data() + m_buffer.size()};
-  }
-
-private:
-  std::span<std::byte> m_buffer;
 };
 
 } // namespace cool_q
