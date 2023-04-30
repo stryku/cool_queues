@@ -34,6 +34,7 @@ struct buffer_header {
   // If not zero, footer is valid and can read up to footer, at once.
   std::uint64_t m_footer_at_offset = 0;
   std::uint64_t m_capacity = 0; // Without header
+  std::uint32_t m_last_seq = 0;
 
   auto calc_end_offset() const {
     return m_end_offset % m_capacity;
@@ -166,6 +167,7 @@ public:
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += (sizeof(message_header) + size) * 2;
       --header.m_end_offset;
+      header.m_last_seq = m_seq;
 
       if ((header.m_end_offset >> 1) >
           header.m_footer_at_offset + get_capacity()) {
@@ -216,6 +218,7 @@ public:
     std::atomic_thread_fence(std::memory_order_release);
 
     --header.m_end_offset;
+    header.m_last_seq = m_seq;
   }
 
 private:
@@ -294,6 +297,7 @@ public:
     if (footer_at_offset != 0 &&
         m_read_offset > true_end_offset - get_capacity() &&
         m_read_offset < footer_at_offset) {
+
       // Can read [read_start, footer)
       const auto data = m_buffer.access_data();
       const auto read_size = footer_at_offset - m_read_offset;
@@ -310,6 +314,44 @@ public:
         m_queue_wrap_offset += get_capacity();
         m_read_offset = m_queue_wrap_offset;
         m_seq = m_buffer.access_footer().m_last_msg_seq;
+        return poll_event_type::new_data;
+      }
+    }
+
+    if (true_end_offset != m_read_offset &&
+        true_end_offset - m_read_offset < get_capacity()) {
+
+      const message_size_t msg_size = read_message_size_at(current_read);
+      if (read_end_offset() != end_offset_before) {
+        return poll_event_type::interrupted;
+      }
+
+      if (msg_size == k_end_of_messages) {
+        // Went all the way to the end of messages. There may be new messages
+        // wrapped. They will be read in the next poll calls.
+
+        // Need to wrap
+        m_queue_wrap_offset += get_capacity();
+        m_read_offset = m_queue_wrap_offset;
+        read_start = m_read_offset;
+        current_read = m_read_offset;
+      }
+
+      // Can read [read_start, true_end_offset)
+      const auto data = m_buffer.access_data();
+      const auto read_size = true_end_offset - m_read_offset;
+      std::span<std::byte> new_data{
+          data.data() + (m_read_offset - m_queue_wrap_offset), read_size};
+
+      poll_cb(new_data);
+
+      if (read_end_offset() != end_offset_before) {
+        return poll_event_type::interrupted;
+      } else {
+        // We read up until footer, meaning we need to wrap. Let's do it right
+        // away.
+        m_read_offset = true_end_offset;
+        m_seq = m_buffer.access_header().m_last_seq;
         return poll_event_type::new_data;
       }
     }
