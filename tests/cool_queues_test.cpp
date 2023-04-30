@@ -865,7 +865,8 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
         }
       }
 
-      auto print_test_stages = [&] {
+      // Useful for debugging.
+      [[maybe_unused]] auto print_test_stages = [&] {
         int i = 0;
         for (const auto &tc : test_stages) {
           fmt::print("[{}] msg-{}, end-before={}, end-after={}, min-i={}\n", i,
@@ -914,12 +915,6 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
             std::memcpy(m_consumer_buffer.data(), new_data.data(),
                         new_data.size());
           });
-
-          if (result == poll_event_type::lost_sync) {
-            print_test_stages();
-            fmt::print("ENDDDDDDDDDDDDDDDD\n");
-            m_consumer->debug_print();
-          }
 
           ASSERT_NE(result, poll_event_type::lost_sync)
               << fmt::format("consumer_i={}", consumer_i.load());
