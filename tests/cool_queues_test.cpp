@@ -961,9 +961,6 @@ TEST_F(MessagingTest, ConcurrentReadWrite) {
                         test_case{1337}, test_case{1024 * 1024, 1024}};
     const auto seeds = {3710639107u, rd()};
 
-    // const auto cases = {test_case{1024}};
-    // const auto seeds = {3710639107u};
-
     for (auto tc : cases) {
       for (auto seed : seeds) {
 
