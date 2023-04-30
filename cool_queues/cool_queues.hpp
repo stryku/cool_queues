@@ -6,9 +6,9 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
 #include <stdexcept>
-
 #include <vector>
 
 #ifndef COOL_Q_PRODUCER_LOG
@@ -53,6 +53,9 @@ struct message_header {
   message_size_t m_size = 0;
   std::uint32_t m_seq = 0;
 };
+
+enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
+
 } // namespace cool_q
 
 template <> struct fmt::formatter<cool_q::buffer_header> {
@@ -236,8 +239,6 @@ private:
   std::uint32_t m_seq = 0;
 };
 
-enum class poll_event_type { no_new_data, new_data, lost_sync, interrupted };
-
 template <std::uint64_t Capacity = 0> class consumer {
 public:
   explicit consumer(std::span<std::byte> memory_buffer)
@@ -246,8 +247,6 @@ public:
 
   poll_event_type poll(auto poll_cb) {
     const auto end_offset_before = access_header().m_end_offset;
-    const auto true_end_offset = end_offset_before >> 1u;
-
     if (end_offset_before & 1) {
       // Producer is busy. Don't read now.
       return poll_event_type::no_new_data;
@@ -255,9 +254,32 @@ public:
 
     COOL_Q_CONSUMER_LOG(
         fmt::format("polling read-offset={}, wrap={}, header={}", m_read_offset,
-                    m_queue_wrap_offset, m_buffer.access_header()));
+                    m_queue_wrap_offset, access_header()));
 
-    // Check sync lost
+    if (const auto result = check_sync_lost(end_offset_before);
+        result.has_value()) {
+      return *result;
+    }
+
+    if (const auto result = try_read_till_footer(end_offset_before, poll_cb);
+        result.has_value()) {
+      return *result;
+    }
+
+    if (const auto result =
+            try_read_till_producer_end(end_offset_before, poll_cb);
+        result.has_value()) {
+      return *result;
+    }
+
+    return read_message_by_message(end_offset_before, poll_cb);
+  }
+
+private:
+  std::optional<poll_event_type>
+  check_sync_lost(std::uint64_t end_offset_before) {
+    const std::uint64_t true_end_offset = end_offset_before >> 1;
+
     if (true_end_offset - m_read_offset > get_capacity()) {
       // Overrun. Need to go to begin.
       if (true_end_offset % get_capacity() == 0) {
@@ -274,18 +296,17 @@ public:
       }
     }
 
-    // All good, sync not lost.
+    return std::nullopt;
+  }
 
-    auto read_start = m_read_offset;
-    auto current_read = m_read_offset;
-    auto last_seq_seen = m_seq;
-
-    //////////////
-
+  std::optional<poll_event_type>
+  try_read_till_footer(std::uint64_t end_offset_before, const auto &poll_cb) {
     const auto footer_at_offset = access_header().m_footer_at_offset;
     if (access_header().m_end_offset != end_offset_before) {
       return poll_event_type::interrupted;
     }
+
+    const std::uint64_t true_end_offset = end_offset_before >> 1;
 
     if (footer_at_offset != 0 &&
         m_read_offset > true_end_offset - get_capacity() &&
@@ -311,6 +332,15 @@ public:
       }
     }
 
+    return std::nullopt;
+  }
+
+  std::optional<poll_event_type>
+  try_read_till_producer_end(std::uint64_t end_offset_before,
+                             const auto &poll_cb) {
+
+    const std::uint64_t true_end_offset = end_offset_before >> 1;
+
     if (true_end_offset != m_read_offset &&
         true_end_offset - m_read_offset < get_capacity()) {
 
@@ -326,8 +356,6 @@ public:
         // Need to wrap
         m_queue_wrap_offset += get_capacity();
         m_read_offset = m_queue_wrap_offset;
-        read_start = m_read_offset;
-        current_read = m_read_offset;
       }
 
       // Can read [read_start, true_end_offset)
@@ -352,7 +380,17 @@ public:
       }
     }
 
-    ///////////////////
+    return std::nullopt;
+  }
+
+  poll_event_type read_message_by_message(std::uint64_t end_offset_before,
+                                          const auto &poll_cb) {
+
+    const std::uint64_t true_end_offset = end_offset_before >> 1;
+
+    auto read_start = m_read_offset;
+    auto current_read = m_read_offset;
+    auto last_seq_seen = m_seq;
 
     while (true) {
       if (current_read == true_end_offset) {
@@ -360,7 +398,6 @@ public:
 
         if (current_read == read_start) {
           // TODO can ever happen?
-
           return poll_event_type::no_new_data;
         }
 
@@ -428,7 +465,6 @@ public:
     }
   }
 
-private:
   const buffer_header &access_header() const {
     std::atomic_thread_fence(std::memory_order_acquire);
     return m_buffer.access_header();
