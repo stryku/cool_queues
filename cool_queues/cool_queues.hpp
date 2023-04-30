@@ -101,24 +101,10 @@ private:
   std::span<std::byte> m_buffer;
 };
 
-} // namespace cool_q
-
-template <> struct fmt::formatter<cool_q::buffer_header> {
-  constexpr auto parse(auto &ctx) const {
-    return ctx.begin();
-  }
-
-  constexpr auto format(const cool_q::buffer_header &header, auto &ctx) {
-    return format_to(ctx.out(), "size={}, end-offset={}, capacity={}",
-                     header.m_header_size, header.m_end_offset,
-                     header.m_capacity);
-  }
-};
-
-namespace cool_q {
-
 class buffer {
 public:
+  struct dont_initialize_header_tag {};
+
   // Constructor for initial queue creation.
   explicit buffer(std::span<std::byte> memory_buffer)
       : m_buffer{memory_buffer} {
@@ -131,7 +117,8 @@ public:
   }
 
   // Constructor for queue with already initialized header.
-  explicit buffer(std::span<std::byte> memory_buffer, const buffer_header &)
+  explicit buffer(std::span<std::byte> memory_buffer,
+                  dont_initialize_header_tag)
       : m_buffer{memory_buffer} {}
 
   buffer_header &access_header() const {
@@ -150,6 +137,22 @@ public:
 private:
   std::span<std::byte> m_buffer;
 };
+
+} // namespace cool_q
+
+template <> struct fmt::formatter<cool_q::buffer_header> {
+  constexpr auto parse(auto &ctx) const {
+    return ctx.begin();
+  }
+
+  constexpr auto format(const cool_q::buffer_header &header, auto &ctx) {
+    return format_to(ctx.out(), "size={}, end-offset={}, capacity={}",
+                     header.m_header_size, header.m_end_offset,
+                     header.m_capacity);
+  }
+};
+
+namespace cool_q {
 
 template <std::uint64_t Capacity = 0> class producer {
 public:
@@ -280,8 +283,7 @@ private:
 template <std::uint64_t Capacity = 0> class consumer {
 public:
   explicit consumer(std::span<std::byte> memory_buffer)
-      : m_buffer{memory_buffer,
-                 reinterpret_cast<buffer_header &>(*memory_buffer.data())} {}
+      : m_buffer{memory_buffer, buffer::dont_initialize_header_tag{}} {}
 
   poll_event_type poll(auto poll_cb) {
     const auto end_offset_before = access_header().m_end_offset;
