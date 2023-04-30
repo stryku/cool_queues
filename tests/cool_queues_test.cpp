@@ -2,6 +2,7 @@
 // #define COOL_Q_CONSUMER_LOG(x) fmt::print("[consumer] {}\n", (x))
 
 #include "cool_queues/cool_queues.hpp"
+#include "fmt/core.h"
 
 #include <gtest/gtest.h>
 
@@ -786,7 +787,10 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
   const auto cases = {test_case{50}, test_case{100}, test_case{1024},
                       test_case{1337}, test_case{1024 * 1024, 1024}};
-  const auto seeds = {3710639107u, rd()};
+  const auto seeds = {3710639107u, 1180542168u, rd()};
+
+  // const auto cases = {test_case{50}};
+  // const auto seeds = {1180542168u};
 
   for (auto tc : cases) {
     for (auto seed : seeds) {
@@ -820,19 +824,24 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
 
       for (int i = 0; i < N; ++i) {
 
+        if (i == 39452) {
+          [[maybe_unused]] int a = 2;
+          a = 22;
+        }
+
         test_stage stage;
 
         std::uint64_t next_msg_size = size_distribution(gen);
         char c = char_distribution(gen);
         stage.m_msg = std::string(next_msg_size, c);
 
-        stage.m_producer_end_before_this_stage = get_header().m_end_offset;
+        stage.m_producer_end_before_this_stage = get_header().m_end_offset / 2;
         write(stage.m_msg);
-        stage.m_producer_end_after_this_stage = get_header().m_end_offset;
+        stage.m_producer_end_after_this_stage = get_header().m_end_offset / 2;
 
         test_stages.push_back(stage);
 
-        std::uint64_t current_stage_end = get_header().m_end_offset;
+        std::uint64_t current_stage_end = get_header().m_end_offset / 2;
 
         bool found = false;
 
@@ -855,6 +864,17 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
           test_stages.back().m_min_consumer_stage_i = 0;
         }
       }
+
+      auto print_test_stages = [&] {
+        int i = 0;
+        for (const auto &tc : test_stages) {
+          fmt::print("[{}] msg-{}, end-before={}, end-after={}, min-i={}\n", i,
+                     tc.m_msg.size(), tc.m_producer_end_before_this_stage,
+                     tc.m_producer_end_after_this_stage,
+                     tc.m_min_consumer_stage_i);
+          ++i;
+        }
+      };
 
       resetup(tc.m_q_size);
 
@@ -894,6 +914,12 @@ TEST_F(MessagingTest, ConcurrentReadWriteNoSyncLost) {
             std::memcpy(m_consumer_buffer.data(), new_data.data(),
                         new_data.size());
           });
+
+          if (result == poll_event_type::lost_sync) {
+            print_test_stages();
+            fmt::print("ENDDDDDDDDDDDDDDDD\n");
+            m_consumer->debug_print();
+          }
 
           ASSERT_NE(result, poll_event_type::lost_sync)
               << fmt::format("consumer_i={}", consumer_i.load());

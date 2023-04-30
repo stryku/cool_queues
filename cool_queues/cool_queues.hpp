@@ -9,6 +9,8 @@
 #include <span>
 #include <stdexcept>
 
+#include <vector>
+
 #ifndef COOL_Q_PRODUCER_LOG
 #define COOL_Q_PRODUCER_LOG(x) ((void)0)
 #endif
@@ -221,8 +223,9 @@ public:
       std::atomic_thread_fence(std::memory_order_release);
     }
 
-    --header.m_end_offset;
     header.m_last_seq = m_seq;
+    // Has to be as the last write. This is important.
+    --header.m_end_offset;
     std::atomic_thread_fence(std::memory_order_release);
   }
 
@@ -252,12 +255,37 @@ public:
     return m_buffer.access_header().m_end_offset;
   }
 
+  void debug_print() {
+    for (const poll_state &s : m_polls) {
+      fmt::print("result={}\n", (int)s.m_poll_result);
+      fmt::print("\tbefore=(hdr-end={}, hdr-foot={}, hdr-seq={}, read={}, "
+                 "wrap={}, seq={})\n",
+                 s.m_before.m_header.m_end_offset,
+                 s.m_before.m_header.m_footer_at,
+                 s.m_before.m_header.m_last_seq, s.m_before.m_read_offset,
+                 s.m_before.m_queue_wrap_offset, s.m_before.m_seq);
+      fmt::print("\treturn=(hdr-end={}, hdr-foot={}, hdr-seq={}, read={}, "
+                 "wrap={}, seq={})\n",
+                 s.m_at_return.m_header.m_end_offset,
+                 s.m_at_return.m_header.m_footer_at,
+                 s.m_at_return.m_header.m_last_seq, s.m_at_return.m_read_offset,
+                 s.m_at_return.m_queue_wrap_offset, s.m_at_return.m_seq);
+    }
+  }
+
   poll_event_type poll(auto poll_cb) {
+
+    poll_state poll_st{};
+
     const auto end_offset_before = read_end_offset();
+    poll_st.m_before = capture_state(end_offset_before, -1, -1);
     const auto true_end_offset = end_offset_before >> 1u;
 
     if (end_offset_before & 1) {
       // Producer is busy. Don't read now.
+      poll_st.m_at_return = capture_state(end_offset_before, -1, -1);
+      poll_st.m_poll_result = poll_event_type::no_new_data;
+      m_polls.push_back(poll_st);
       return poll_event_type::no_new_data;
     }
 
@@ -280,6 +308,9 @@ public:
         const auto msg_header = read_current_message_header();
         if (msg_header.m_seq != m_seq + 1) {
           // Sync lost
+          poll_st.m_at_return = capture_state(end_offset_before, -1, -1);
+          poll_st.m_poll_result = poll_event_type::lost_sync;
+          m_polls.push_back(poll_st);
           return poll_event_type::lost_sync;
         }
       }
@@ -295,9 +326,14 @@ public:
 
     std::atomic_thread_fence(std::memory_order_acquire);
     const auto footer_at_offset = m_buffer.access_header().m_footer_at_offset;
-    if (read_end_offset() != end_offset_before) {
+    if (auto end = read_end_offset(); end != end_offset_before) {
+      poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+      poll_st.m_poll_result = poll_event_type::interrupted;
+      m_polls.push_back(poll_st);
       return poll_event_type::interrupted;
     }
+
+    poll_st.m_before.m_header.m_footer_at = footer_at_offset;
 
     if (footer_at_offset != 0 &&
         m_read_offset > true_end_offset - get_capacity() &&
@@ -311,7 +347,10 @@ public:
 
       poll_cb(new_data);
 
-      if (read_end_offset() != end_offset_before) {
+      if (auto end = read_end_offset(); end != end_offset_before) {
+        poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+        poll_st.m_poll_result = poll_event_type::interrupted;
+        m_polls.push_back(poll_st);
         return poll_event_type::interrupted;
       } else {
         // We read up until footer, meaning we need to wrap. Let's do it right
@@ -319,6 +358,11 @@ public:
         m_queue_wrap_offset += get_capacity();
         m_read_offset = m_queue_wrap_offset;
         m_seq = m_buffer.access_footer().m_last_msg_seq;
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, m_seq);
+        poll_st.m_poll_result = poll_event_type::new_data;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::new_data;
       }
     }
@@ -327,7 +371,12 @@ public:
         true_end_offset - m_read_offset < get_capacity()) {
 
       const message_size_t msg_size = read_message_size_at(m_read_offset);
-      if (read_end_offset() != end_offset_before) {
+      if (auto end = read_end_offset(); end != end_offset_before) {
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, m_seq);
+        poll_st.m_poll_result = poll_event_type::interrupted;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::interrupted;
       }
 
@@ -353,13 +402,23 @@ public:
       std::atomic_thread_fence(std::memory_order_acquire);
       const auto seq = m_buffer.access_header().m_last_seq;
 
-      if (read_end_offset() != end_offset_before) {
+      if (auto end = read_end_offset(); end != end_offset_before) {
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, seq);
+        poll_st.m_poll_result = poll_event_type::interrupted;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::interrupted;
       } else {
         // We read up until footer, meaning we need to wrap. Let's do it right
         // away.
         m_read_offset = true_end_offset;
         m_seq = seq;
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, seq);
+        poll_st.m_poll_result = poll_event_type::new_data;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::new_data;
       }
     }
@@ -372,6 +431,11 @@ public:
 
         if (current_read == read_start) {
           // TODO can ever happen?
+
+          poll_st.m_at_return = capture_state(-1, footer_at_offset, -1);
+          poll_st.m_poll_result = poll_event_type::no_new_data;
+          m_polls.push_back(poll_st);
+
           return poll_event_type::no_new_data;
         }
 
@@ -381,17 +445,32 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (read_end_offset() != end_offset_before) {
+        if (auto end = read_end_offset(); end != end_offset_before) {
+
+          poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+          poll_st.m_poll_result = poll_event_type::interrupted;
+          m_polls.push_back(poll_st);
+
           return poll_event_type::interrupted;
         } else {
           m_seq = last_seq_seen;
           m_read_offset = current_read;
+
+          poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+          poll_st.m_poll_result = poll_event_type::new_data;
+          m_polls.push_back(poll_st);
+
           return poll_event_type::new_data;
         }
       }
 
       const message_size_t msg_size = read_message_size_at(current_read);
-      if (read_end_offset() != end_offset_before) {
+      if (auto end = read_end_offset(); end != end_offset_before) {
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+        poll_st.m_poll_result = poll_event_type::interrupted;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::interrupted;
       }
 
@@ -415,19 +494,34 @@ public:
                                           (read_start - m_queue_wrap_offset),
                                       current_read - read_start};
         poll_cb(new_data);
-        if (read_end_offset() != end_offset_before) {
+        if (auto end = read_end_offset(); end != end_offset_before) {
+
+          poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+          poll_st.m_poll_result = poll_event_type::interrupted;
+          m_polls.push_back(poll_st);
+
           return poll_event_type::interrupted;
         } else {
           m_queue_wrap_offset += get_capacity();
           m_read_offset = m_queue_wrap_offset;
           m_seq = last_seq_seen;
+
+          poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+          poll_st.m_poll_result = poll_event_type::new_data;
+          m_polls.push_back(poll_st);
+
           return poll_event_type::new_data;
         }
       }
 
       // Got new message. Acknowledge it and iterate again.
       const auto msg_header = read_message_header_at(current_read);
-      if (read_end_offset() != end_offset_before) {
+      if (auto end = read_end_offset(); end != end_offset_before) {
+
+        poll_st.m_at_return = capture_state(end, footer_at_offset, -1);
+        poll_st.m_poll_result = poll_event_type::interrupted;
+        m_polls.push_back(poll_st);
+
         return poll_event_type::interrupted;
       }
       current_read += msg_header.m_size + sizeof(message_header);
@@ -466,6 +560,35 @@ private:
     }
   }
 
+  struct state {
+    struct {
+      std::uint64_t m_end_offset = 0;
+      std::uint64_t m_footer_at = 0;
+      std::uint64_t m_last_seq = 0;
+    } m_header{};
+
+    std::uint64_t m_read_offset = 0;
+    // It only grows.
+    std::uint64_t m_queue_wrap_offset = 0;
+    std::uint32_t m_seq = 0;
+  };
+
+  struct poll_state {
+    state m_before;
+    state m_at_return;
+    poll_event_type m_poll_result = (poll_event_type)42;
+  };
+
+  state capture_state(std::uint64_t end_offset, std::uint64_t footer_at,
+                      std::uint64_t lat_seq) const {
+    state st;
+    st.m_header = {end_offset, footer_at, lat_seq};
+    st.m_read_offset = m_read_offset;
+    st.m_queue_wrap_offset = m_queue_wrap_offset;
+    st.m_seq = m_seq;
+    return st;
+  }
+
 private:
   buffer m_buffer;
   // It only grows. It should be calculated - m_queue_wrap_offset.
@@ -473,6 +596,7 @@ private:
   // It only grows.
   std::uint64_t m_queue_wrap_offset = 0;
   std::uint32_t m_seq = 0;
+  std::vector<poll_state> m_polls;
 };
 
 class messages_range {
