@@ -126,7 +126,7 @@ TEST(BufferTest, Constructor) {
 
   header.m_end_offset = 40;
 
-  buffer buf2(memory_buffer, header);
+  buffer buf2(memory_buffer, buffer::dont_initialize_header_tag{});
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 40);
   EXPECT_EQ(header.m_capacity, memory_buffer.size() - sizeof(buffer_header) -
@@ -139,7 +139,7 @@ TEST(ProducerTest, Constructor) {
 
   producer producer{memory_buffer};
 
-  buffer buffer(memory_buffer, buffer_header{});
+  buffer buffer(memory_buffer, buffer::dont_initialize_header_tag{});
   auto &header = buffer.access_header();
   EXPECT_EQ(header.m_header_size, sizeof(header));
   EXPECT_EQ(header.m_end_offset, 0);
@@ -153,7 +153,7 @@ TEST(ConsumerTest, Constructor) {
 
   producer producer{memory_buffer};
 
-  buffer buffer(memory_buffer, buffer_header{});
+  buffer buffer(memory_buffer, buffer::dont_initialize_header_tag{});
   auto &header = buffer.access_header();
   header.m_end_offset = 40;
 
