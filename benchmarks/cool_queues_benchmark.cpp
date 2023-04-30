@@ -1,9 +1,11 @@
 #include "cool_queues/cool_queues.hpp"
 
+#include <atomic>
 #include <benchmark/benchmark.h>
 
 #include <array>
 #include <random>
+#include <thread>
 
 static void std_copy(benchmark::State &state) {
   std::vector<std::byte> memory_buffer(1024 * 1024 + 1024);
@@ -252,10 +254,93 @@ static void consumer_ct_capacity(benchmark::State &state) {
   state.SetItemsProcessed(messages);
 }
 
+static void concurrent_consumers(benchmark::State &state) {
+  // Shared between threads
+  static std::vector<std::byte> memory_buffer(1024 * 1024 + 1024);
+  static std::atomic_bool producer_running = false;
+
+  std::array<std::byte, 512> message_buffer{};
+  std::array<std::byte, 1024 * 1024> consumer_buffer;
+
+  std::unique_ptr<cool_q::producer<1024 * 1024>> producer;
+
+  std::mt19937 gen(42);
+  std::uniform_int_distribution<> dist(0, 512);
+
+  for (auto &byte : message_buffer) {
+    byte = std::byte(dist(gen));
+  }
+
+  std::thread producer_thread;
+
+  // Set up
+  if (state.thread_index() == 0) {
+    producer_running.store(false);
+    producer = std::make_unique<cool_q::producer<1024 * 1024>>(memory_buffer);
+
+    producer_thread = std::thread{[&] {
+      producer_running.store(true);
+
+      while (producer_running.load()) {
+        const auto size = dist(gen);
+        producer->write(size, [&](const auto buffer) {
+          std::copy(message_buffer.begin(), message_buffer.begin() + size,
+                    buffer.begin());
+        });
+      }
+    }};
+  }
+
+  // Wait for producer to start
+  while (!producer_running.load()) {
+    // Do nothing
+  }
+
+  // Run
+  std::int64_t bytes_processed = 0;
+  std::int64_t messages = 0;
+
+  cool_q::consumer<1024 * 1024> consumer{memory_buffer};
+
+  for (auto _ : state) {
+    std::uint64_t read_size = 0;
+
+    const auto result = consumer.poll([&](const auto data) {
+      std::copy(data.begin(), data.end(), consumer_buffer.begin());
+      bytes_processed += data.size();
+      read_size = data.size();
+    });
+
+    if (result != cool_q::poll_event_type::new_data) {
+      continue;
+    }
+
+    const std::span read_data{consumer_buffer.data(), read_size};
+
+    for (auto msg : cool_q::messages_range{read_data}) {
+      (void)msg;
+      ++messages;
+    }
+
+    benchmark::DoNotOptimize(memory_buffer);
+    benchmark::DoNotOptimize(message_buffer);
+    benchmark::DoNotOptimize(consumer_buffer);
+  }
+
+  if (state.thread_index() == 0) {
+    producer_running.store(false);
+    producer_thread.join();
+  }
+
+  state.SetBytesProcessed(bytes_processed);
+  state.SetItemsProcessed(messages);
+}
+
 BENCHMARK(std_copy);
 BENCHMARK(producer_runtime_capacity);
 BENCHMARK(producer_ct_capacity);
 BENCHMARK(consumer_runtime_capacity);
 BENCHMARK(consumer_ct_capacity);
+BENCHMARK(concurrent_consumers)->ThreadRange(1, 6)->UseRealTime();
 
 BENCHMARK_MAIN();

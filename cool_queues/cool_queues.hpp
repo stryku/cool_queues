@@ -167,16 +167,13 @@ public:
       message_header &msg_header = reinterpret_cast<message_header &>(
           *(data.data() + true_end_offset % get_capacity()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
-      header.m_end_offset += (sizeof(message_header) + size) * 2;
-      std::atomic_thread_fence(std::memory_order_release);
+      header.m_end_offset += (sizeof(message_header) + size) << 1;
       header.m_last_seq = m_seq;
-      std::atomic_thread_fence(std::memory_order_release);
 
       if ((header.m_end_offset >> 1) >
           header.m_footer_at_offset + get_capacity()) {
         // Footer got overrun, disable it.
         header.m_footer_at_offset = 0;
-        std::atomic_thread_fence(std::memory_order_release);
       }
       --header.m_end_offset;
       std::atomic_thread_fence(std::memory_order_release);
@@ -191,12 +188,10 @@ public:
     if (true_end_offset % get_capacity() == 0) {
       std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
       header.m_footer_at_offset = true_end_offset;
-      std::atomic_thread_fence(std::memory_order_release);
     } else {
       std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
                   sizeof(footer));
       header.m_footer_at_offset = true_end_offset;
-      std::atomic_thread_fence(std::memory_order_release);
     }
 
     std::span<std::byte> write_buffer =
@@ -215,13 +210,11 @@ public:
 
     header.m_end_offset +=
         (offset_till_end + sizeof(message_header) + size) * 2;
-    std::atomic_thread_fence(std::memory_order_release);
 
     if ((header.m_end_offset >> 1) >
         header.m_footer_at_offset + get_capacity()) {
       // Footer got overrun, disable it.
       header.m_footer_at_offset = 0;
-      std::atomic_thread_fence(std::memory_order_release);
     }
 
     header.m_last_seq = m_seq;
