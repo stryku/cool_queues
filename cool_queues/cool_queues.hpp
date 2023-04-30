@@ -131,8 +131,8 @@ public:
   void write(message_size_t size, auto &&write_cb) {
     auto &header = m_buffer.access_header();
     ++header.m_end_offset;
-    const auto true_end_offset = header.m_end_offset >> 1;
     std::atomic_thread_fence(std::memory_order_release);
+    const auto true_end_offset = header.m_end_offset >> 1;
 
     auto data = m_buffer.access_data();
 
@@ -166,16 +166,18 @@ public:
           *(data.data() + true_end_offset % get_capacity()));
       msg_header = message_header{.m_size = size, .m_seq = ++m_seq};
       header.m_end_offset += (sizeof(message_header) + size) * 2;
+      std::atomic_thread_fence(std::memory_order_release);
       --header.m_end_offset;
       header.m_last_seq = m_seq;
+      std::atomic_thread_fence(std::memory_order_release);
 
       if ((header.m_end_offset >> 1) >
           header.m_footer_at_offset + get_capacity()) {
         // Footer got overrun, disable it.
         header.m_footer_at_offset = 0;
+        std::atomic_thread_fence(std::memory_order_release);
       }
 
-      std::atomic_thread_fence(std::memory_order_release);
       return;
     }
 
@@ -186,10 +188,12 @@ public:
     if (true_end_offset % get_capacity() == 0) {
       std::memcpy(data.data() + get_capacity(), &footer, sizeof(footer));
       header.m_footer_at_offset = true_end_offset;
+      std::atomic_thread_fence(std::memory_order_release);
     } else {
       std::memcpy(data.data() + true_end_offset % get_capacity(), &footer,
                   sizeof(footer));
       header.m_footer_at_offset = true_end_offset;
+      std::atomic_thread_fence(std::memory_order_release);
     }
 
     std::span<std::byte> write_buffer =
@@ -208,17 +212,18 @@ public:
 
     header.m_end_offset +=
         (offset_till_end + sizeof(message_header) + size) * 2;
+    std::atomic_thread_fence(std::memory_order_release);
 
     if ((header.m_end_offset >> 1) >
         header.m_footer_at_offset + get_capacity()) {
       // Footer got overrun, disable it.
       header.m_footer_at_offset = 0;
+      std::atomic_thread_fence(std::memory_order_release);
     }
-
-    std::atomic_thread_fence(std::memory_order_release);
 
     --header.m_end_offset;
     header.m_last_seq = m_seq;
+    std::atomic_thread_fence(std::memory_order_release);
   }
 
 private:
@@ -321,7 +326,7 @@ public:
     if (true_end_offset != m_read_offset &&
         true_end_offset - m_read_offset < get_capacity()) {
 
-      const message_size_t msg_size = read_message_size_at(current_read);
+      const message_size_t msg_size = read_message_size_at(m_read_offset);
       if (read_end_offset() != end_offset_before) {
         return poll_event_type::interrupted;
       }
@@ -345,13 +350,16 @@ public:
 
       poll_cb(new_data);
 
+      std::atomic_thread_fence(std::memory_order_acquire);
+      const auto seq = m_buffer.access_header().m_last_seq;
+
       if (read_end_offset() != end_offset_before) {
         return poll_event_type::interrupted;
       } else {
         // We read up until footer, meaning we need to wrap. Let's do it right
         // away.
         m_read_offset = true_end_offset;
-        m_seq = m_buffer.access_header().m_last_seq;
+        m_seq = seq;
         return poll_event_type::new_data;
       }
     }
